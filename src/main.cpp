@@ -9,16 +9,19 @@
 #include <system_error>
 
 import actualklasterkraft.acceptor;
+import actualklasterkraft.world.player;
 
 int main()
 {
     std::println("Hello World!");
 
     boost::asio::io_context io;
+    emplace_global_player_pool(io);
+
     Acceptor acceptor(io.get_executor(), 25565);
     acceptor.start();
-    io.run();
 
+    io.run();
     return 0;
 }
 
