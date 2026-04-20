@@ -1,0 +1,5 @@
+BasedOnStyle: WebKit
+BreakBeforeBraces: Allman
+BreakBeforeInheritanceComma: true
+PointerAlignment: Right
+ColumnLimit: 80
