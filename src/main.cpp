@@ -2,9 +2,11 @@
 #include <boost/asio/completion_condition.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/read.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <exception>
 #include <iostream>
 #include <print>
@@ -36,16 +38,23 @@ public:
     {
     }
 
-    asio::awaitable<void> await_for_packet()
+    /// Awaits for a packet and reads it into the streambuf (without Length).
+    ///
+    /// @returns false if EOF
+    asio::awaitable<bool> await_for_packet() noexcept
     {
         char byte { };
         int32_t packet_size { };
         unsigned position { };
+        sys::error_code err { };
 
         for (;;)
         {
-            co_await asio::async_read(
-                m_sock, asio::buffer(&byte, 1), asio::transfer_exactly(1));
+            co_await asio::async_read(m_sock, asio::buffer(&byte, 1),
+                asio::transfer_exactly(1), asio::redirect_error(err));
+            if (err == asio::error::eof)
+                co_return false;
+
             packet_size |= (byte & 0b01111111) << position;
             if ((byte & 0b10000000) == 0)
                 break;
@@ -56,32 +65,46 @@ public:
                     "Session::await_for_packet: VarInt is bigger than 5 bytes");
         }
 
-        co_await asio::async_read(
-            m_sock, m_streambuf, asio::transfer_exactly(packet_size));
+        co_await asio::async_read(m_sock, m_streambuf,
+            asio::transfer_exactly(packet_size), asio::redirect_error(err));
+        if (err == asio::error::eof)
+            co_return false;
+
+        co_return true;
     }
 
     void next_packet()
     {
         asio::co_spawn(m_io, await_for_packet(),
-            [self = boost::intrusive_ptr(this)](std::exception_ptr e_ptr)
+            [self = boost::intrusive_ptr(this)](
+                std::exception_ptr e_ptr, bool is_ok)
             {
                 if (e_ptr)
                 {
                     std::rethrow_exception(e_ptr);
                 }
 
-                for (;;)
+                if (is_ok)
                 {
-                    int byte = self->m_streambuf.sbumpc();
-                    if (byte < 0)
-                        break;
+                    for (;;)
+                    {
+                        int byte = self->m_streambuf.sbumpc();
+                        if (byte < 0)
+                            break;
 
-                    std::print("{:02x} ", byte);
+                        std::print("{:02x} ", byte);
+                    }
+                    self->m_streambuf.consume(self->m_streambuf.size());
+                    std::println();
+
+                    self->next_packet();
                 }
-                self->m_streambuf.consume(self->m_streambuf.size());
-                std::println();
-
-                self->next_packet();
+                else
+                {
+                    std::cout << "Connection from "
+                              << self->m_sock.remote_endpoint()
+                              << " was closed with an EOF" << std::endl;
+                }
             });
     }
 };
@@ -106,6 +129,9 @@ public:
         m_acceptor.async_accept(*m_opt_sock,
             [&](const sys::error_code &err)
             {
+                std::cout << "New connection from "
+                          << m_opt_sock->remote_endpoint() << std::endl;
+
                 boost::intrusive_ptr session { new Session {
                     m_io, std::move(*m_opt_sock) } };
                 session->next_packet();
