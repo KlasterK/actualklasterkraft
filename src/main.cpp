@@ -1,16 +1,16 @@
+#include "errc.hpp"
+#include <array>
 #include <boost/asio.hpp>
-#include <boost/asio/completion_condition.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/read.hpp>
-#include <boost/asio/redirect_error.hpp>
-#include <boost/asio/use_awaitable.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/smart_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
-#include <boost/system/detail/error_code.hpp>
+#include <cstdint>
 #include <exception>
+#include <expected>
+#include <functional>
 #include <iostream>
+#include <optional>
 #include <print>
-#include <stdexcept>
+#include <sstream>
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -24,36 +24,42 @@ private:
     tcp::socket m_sock;
     asio::streambuf m_streambuf;
 
-    enum class State
-    {
-        Handshake,
-    };
+    std::string m_remote_endpoint_name;
+    asio::awaitable<sys::error_code> (Session::*m_state_cb)()
+        = &Session::state_handshake;
 
-    State m_state { State::Handshake };
-
-public:
-    Session(asio::io_context &io, tcp::socket &&sock)
-        : m_io(io)
-        , m_sock(std::move(sock))
+private:
+    void print_streambuf()
     {
+        for (;;)
+        {
+            int byte = m_streambuf.sbumpc();
+            if (byte < 0)
+                break;
+
+            std::print("{:02x} ", byte);
+        }
+        m_streambuf.consume(m_streambuf.size());
+        std::println();
     }
 
-    /// Awaits for a packet and reads it into the streambuf (without Length).
+    /// Awaits for a packet and reads it into the streambuf
+    /// (without Packet Length).
     ///
-    /// @returns false if EOF
-    asio::awaitable<bool> await_for_packet() noexcept
+    /// @returns Packet size or error code.
+    asio::awaitable<std::expected<size_t, sys::error_code>> await_for_packet()
     {
         char byte { };
         int32_t packet_size { };
         unsigned position { };
-        sys::error_code err { };
+        sys::error_code ec { };
 
         for (;;)
         {
             co_await asio::async_read(m_sock, asio::buffer(&byte, 1),
-                asio::transfer_exactly(1), asio::redirect_error(err));
-            if (err == asio::error::eof)
-                co_return false;
+                asio::transfer_exactly(1), asio::redirect_error(ec));
+            if (ec)
+                co_return std::unexpected(ec);
 
             packet_size |= (byte & 0b01111111) << position;
             if ((byte & 0b10000000) == 0)
@@ -61,50 +67,58 @@ public:
 
             position += 7;
             if (position > 32)
-                throw std::runtime_error(
-                    "Session::await_for_packet: VarInt is bigger than 5 bytes");
+                co_return std::unexpected(MCProtocolError::VarIntTooBig);
         }
 
         co_await asio::async_read(m_sock, m_streambuf,
-            asio::transfer_exactly(packet_size), asio::redirect_error(err));
-        if (err == asio::error::eof)
-            co_return false;
+            asio::transfer_exactly(packet_size), asio::redirect_error(ec));
 
-        co_return true;
+        if (ec)
+            co_return std::unexpected(ec);
+
+        co_return packet_size;
+    }
+
+    asio::awaitable<sys::error_code> state_handshake()
+    {
+        std::println("\tstate_handshake");
+    }
+
+public:
+    Session(asio::io_context &io, tcp::socket &&sock)
+        : m_io(io)
+        , m_sock(std::move(sock))
+    {
+        std::ostringstream oss;
+        oss << m_sock.remote_endpoint();
+        m_remote_endpoint_name = std::move(oss.str());
     }
 
     void next_packet()
     {
-        asio::co_spawn(m_io, await_for_packet(),
+        asio::co_spawn(m_io, std::invoke(m_state_cb, this),
             [self = boost::intrusive_ptr(this)](
-                std::exception_ptr e_ptr, bool is_ok)
+                std::exception_ptr e_ptr, sys::error_code ec)
             {
                 if (e_ptr)
-                {
                     std::rethrow_exception(e_ptr);
-                }
 
-                if (is_ok)
+                if (ec)
                 {
-                    for (;;)
-                    {
-                        int byte = self->m_streambuf.sbumpc();
-                        if (byte < 0)
-                            break;
-
-                        std::print("{:02x} ", byte);
-                    }
-                    self->m_streambuf.consume(self->m_streambuf.size());
-                    std::println();
-
-                    self->next_packet();
+                    std::println("Connection from {} caused an error: {}",
+                        self->m_remote_endpoint_name, ec.what());
+                    self->m_sock.close();
+                    return;
                 }
-                else
+
+                if (!self->m_sock.is_open())
                 {
-                    std::cout << "Connection from "
-                              << self->m_sock.remote_endpoint()
-                              << " was closed with an EOF" << std::endl;
+                    std::println("Connection {} was successfully closed",
+                        self->m_remote_endpoint_name);
+                    return;
                 }
+
+                self->next_packet();
             });
     }
 };
@@ -127,7 +141,7 @@ public:
     {
         m_opt_sock.emplace(m_io);
         m_acceptor.async_accept(*m_opt_sock,
-            [&](const sys::error_code &err)
+            [this](const sys::error_code &err)
             {
                 std::cout << "New connection from "
                           << m_opt_sock->remote_endpoint() << std::endl;
