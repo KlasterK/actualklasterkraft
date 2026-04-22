@@ -79,6 +79,86 @@ private:
         co_return packet_size;
     }
 
+    std::expected<int32_t, sys::error_code> read_vari32()
+    {
+        int byte { };
+        int32_t value { };
+        unsigned position { };
+
+        for (;;)
+        {
+            byte = m_streambuf.sbumpc();
+            if (byte < 0)
+                return std::unexpected(asio::error::eof);
+
+            value |= (byte & 0x7F);
+            if ((byte & 0x80) == 0)
+                break;
+
+            position += 7;
+            if (position > 32)
+                return std::unexpected(MCProtocolError::VarIntTooBig);
+        }
+        return value;
+    }
+
+    template <std::integral T> std::optional<T> read_integer()
+    {
+        T value { };
+        if (m_streambuf.sgetn(reinterpret_cast<char *>(&value), sizeof(T))
+            < sizeof(T))
+            return std::nullopt;
+
+        return value;
+    }
+
+    asio::awaitable<sys::error_code> flush_packet()
+    {
+        std::array<uint8_t, 5> size_buf;
+        auto size_end = size_buf.begin();
+
+        for (uint32_t value = m_streambuf.size();;)
+        {
+            if ((value & ~0x7F) == 0)
+            {
+                *size_end++ = value & 0xFF;
+                break;
+            }
+            *size_end++ = (value & 0x7F) | 0x80;
+            value >>= 7u;
+        }
+
+        auto bufs = std::to_array<asio::const_buffer>(
+            { { size_buf.begin(),
+                  static_cast<size_t>(size_end - size_buf.begin()) },
+                m_streambuf.data() });
+
+        auto [ec, _] = co_await asio::async_write(m_sock, bufs, asio::as_tuple);
+        m_streambuf.consume(m_streambuf.size());
+
+        co_return ec;
+    }
+
+    void write_vari32(int32_t value)
+    {
+        for (;;)
+        {
+            if ((value & ~0x7F) == 0)
+            {
+                m_streambuf.sputc(value & 0xFF);
+                return;
+            }
+
+            m_streambuf.sputc((value & 0x7F) | 0x80);
+            value = int32_t(uint32_t(value) >> 7u);
+        }
+    }
+
+    template <std::integral T> void write_integer(T value)
+    {
+        m_streambuf.sputn(reinterpret_cast<char *>(&value), sizeof(T));
+    }
+
     asio::awaitable<sys::error_code> state_handshake()
     {
         std::println("\tstate_handshake");
