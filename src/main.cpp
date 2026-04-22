@@ -162,6 +162,141 @@ private:
     asio::awaitable<sys::error_code> state_handshake()
     {
         std::println("\tstate_handshake");
+
+        auto packet_result = co_await await_for_packet();
+        if (!packet_result)
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+
+        // Packet ID
+        if (m_streambuf.sbumpc() != 0x00)
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+
+        // Protocol Version
+        auto vari32_result = read_vari32();
+        if (!vari32_result)
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+        // Don't check version for now
+        std::println("\tProtocol Version: {}", *vari32_result);
+
+        // Server Address
+        vari32_result = read_vari32();
+        if (!vari32_result)
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+
+        {
+            // Don't use this string, skip bytes. But can't move from streambuf
+            // without reading, use a temp buffer for it.
+            std::string dummy(*vari32_result, '\0');
+            m_streambuf.sgetn(dummy.data(), *vari32_result);
+        }
+
+        // Server Port, u16, won't use
+        if (!read_integer<uint16_t>().has_value())
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+
+        // Next State
+        vari32_result = read_vari32();
+        if (!vari32_result || *vari32_result != 1) // Status
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+
+        m_state_cb = &Session::state_status;
+
+        if (m_streambuf.in_avail() != 0)
+        {
+            m_sock.close();
+            co_return sys::error_code { };
+        };
+
+        m_streambuf.consume(m_streambuf.size());
+        co_return sys::error_code { };
+    }
+
+    asio::awaitable<sys::error_code> state_status()
+    {
+        std::println("\tstate_status");
+
+        // Getting packet Status Request
+        auto packet_result = co_await await_for_packet();
+        if (!packet_result)
+            co_return packet_result.error();
+
+        // Packet ID
+        if (m_streambuf.sbumpc() != 0x00)
+            co_return MCProtocolError::UnexpectedPacketID;
+
+        if (m_streambuf.in_avail() != 0)
+            co_return MCProtocolError::ExcessPacketData;
+        m_streambuf.consume(m_streambuf.size());
+
+        static constexpr std::string_view ExampleResponse = R"({
+            "version": {
+                "name": "26.1.2",
+                "protocol": 775
+            },
+            "players": {
+                "max": 20,
+                "online": 1,
+                "sample": []
+            },
+            "description": {
+                "text": "Hello, world!"
+            },
+            "enforcesSecureChat": false
+        })";
+
+        m_streambuf.sputc(0x00); // Status Response
+        write_vari32(ExampleResponse.size());
+        m_streambuf.sputn(ExampleResponse.data(), ExampleResponse.size());
+
+        auto ec = co_await flush_packet();
+        if (ec)
+            co_return ec;
+
+        // Getting packet Ping Request
+        packet_result = co_await await_for_packet();
+        if (!packet_result)
+            co_return packet_result.error();
+
+        // Packet ID
+        if (m_streambuf.sbumpc() != 0x01)
+            co_return MCProtocolError::UnexpectedPacketID;
+
+        auto payload_opt = read_integer<uint64_t>();
+        if (!payload_opt)
+            co_return MCProtocolError::UnsufficientPacketData;
+
+        if (m_streambuf.in_avail() != 0)
+            co_return MCProtocolError::ExcessPacketData;
+        m_streambuf.consume(m_streambuf.size());
+
+        // Pong Response
+        m_streambuf.sputc(0x01); // ID
+        write_integer<uint64_t>(*payload_opt);
+
+        ec = co_await flush_packet();
+        if (ec)
+            co_return ec;
+
+        m_sock.close();
+        co_return sys::error_code { };
     }
 
 public:
