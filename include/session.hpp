@@ -22,15 +22,10 @@ private:
     boost::asio::awaitable<std::expected<size_t, boost::system::error_code>>
     await_for_packet();
 
-    std::expected<int32_t, boost::system::error_code> read_vari32();
-    template <std::integral T> std::optional<T> read_integer();
-
     boost::asio::awaitable<boost::system::error_code> flush_packet();
 
-    void write_vari32(int32_t value);
-    template <std::integral T> void write_integer(T value);
-
     boost::asio::awaitable<boost::system::error_code> state_handshake();
+
     boost::asio::awaitable<boost::system::error_code> state_status();
 
 private:
@@ -42,20 +37,5 @@ private:
     boost::asio::awaitable<boost::system::error_code> (Session::*m_state_cb)()
         = &Session::state_handshake;
 };
-
-template <std::integral T> inline std::optional<T> Session::read_integer()
-{
-    T value { };
-    if (m_streambuf.sgetn(reinterpret_cast<char *>(&value), sizeof(T))
-        < sizeof(T))
-        return std::nullopt;
-
-    return value;
-}
-
-template <std::integral T> inline void Session::write_integer(T value)
-{
-    m_streambuf.sputn(reinterpret_cast<char *>(&value), sizeof(T));
-}
 
 #endif // ACTKK_SESSION_HPP

@@ -26,12 +26,12 @@ public:
 
 namespace boost
 {
-namespace system
-{
-    template <> struct is_error_code_enum<MCProtocolError> : std::true_type
+    namespace system
     {
-    };
-}
+        template <> struct is_error_code_enum<MCProtocolError> : std::true_type
+        {
+        };
+    }
 }
 
 inline boost::system::error_code make_error_code(MCProtocolError err)

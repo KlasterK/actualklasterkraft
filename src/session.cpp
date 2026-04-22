@@ -1,5 +1,6 @@
 #include "session.hpp"
 #include "errc.hpp"
+#include "streambufops.hpp"
 #include <boost/intrusive_ptr.hpp>
 #include <print>
 
@@ -54,29 +55,6 @@ Session::await_for_packet()
     co_return packet_size;
 }
 
-std::expected<int32_t, sys::error_code> Session::read_vari32()
-{
-    int byte { };
-    int32_t value { };
-    unsigned position { };
-
-    for (;;)
-    {
-        byte = m_streambuf.sbumpc();
-        if (byte < 0)
-            return std::unexpected(asio::error::eof);
-
-        value |= (byte & 0x7F);
-        if ((byte & 0x80) == 0)
-            break;
-
-        position += 7;
-        if (position > 32)
-            return std::unexpected(MCProtocolError::VarIntTooBig);
-    }
-    return value;
-}
-
 boost::asio::awaitable<boost::system::error_code> Session::flush_packet()
 {
     std::array<uint8_t, 5> size_buf;
@@ -104,21 +82,6 @@ boost::asio::awaitable<boost::system::error_code> Session::flush_packet()
     co_return ec;
 }
 
-void Session::write_vari32(int32_t value)
-{
-    for (;;)
-    {
-        if ((value & ~0x7F) == 0)
-        {
-            m_streambuf.sputc(value & 0xFF);
-            return;
-        }
-
-        m_streambuf.sputc((value & 0x7F) | 0x80);
-        value = int32_t(uint32_t(value) >> 7u);
-    }
-}
-
 boost::asio::awaitable<boost::system::error_code> Session::state_handshake()
 {
     std::println("\tstate_handshake");
@@ -138,7 +101,7 @@ boost::asio::awaitable<boost::system::error_code> Session::state_handshake()
     };
 
     // Protocol Version
-    auto vari32_result = read_vari32();
+    auto vari32_result = streambufops::read_vari32(m_streambuf);
     if (!vari32_result)
     {
         m_sock.close();
@@ -148,7 +111,7 @@ boost::asio::awaitable<boost::system::error_code> Session::state_handshake()
     std::println("\tProtocol Version: {}", *vari32_result);
 
     // Server Address
-    vari32_result = read_vari32();
+    vari32_result = streambufops::read_vari32(m_streambuf);
     if (!vari32_result)
     {
         m_sock.close();
@@ -163,14 +126,14 @@ boost::asio::awaitable<boost::system::error_code> Session::state_handshake()
     }
 
     // Server Port, u16, won't use
-    if (!read_integer<uint16_t>().has_value())
+    if (!streambufops::read_integer<uint16_t>(m_streambuf).has_value())
     {
         m_sock.close();
         co_return boost::system::error_code { };
     };
 
     // Next State
-    vari32_result = read_vari32();
+    vari32_result = streambufops::read_vari32(m_streambuf);
     if (!vari32_result || *vari32_result != 1) // Status
     {
         m_sock.close();
@@ -223,7 +186,7 @@ boost::asio::awaitable<boost::system::error_code> Session::state_status()
         })";
 
     m_streambuf.sputc(0x00); // Status Response
-    write_vari32(ExampleResponse.size());
+    streambufops::write_vari32(m_streambuf, ExampleResponse.size());
     m_streambuf.sputn(ExampleResponse.data(), ExampleResponse.size());
 
     auto ec = co_await flush_packet();
@@ -239,7 +202,7 @@ boost::asio::awaitable<boost::system::error_code> Session::state_status()
     if (m_streambuf.sbumpc() != 0x01)
         co_return MCProtocolError::UnexpectedPacketID;
 
-    auto payload_opt = read_integer<uint64_t>();
+    auto payload_opt = streambufops::read_integer<uint64_t>(m_streambuf);
     if (!payload_opt)
         co_return MCProtocolError::UnsufficientPacketData;
 
@@ -249,7 +212,7 @@ boost::asio::awaitable<boost::system::error_code> Session::state_status()
 
     // Pong Response
     m_streambuf.sputc(0x01); // ID
-    write_integer<uint64_t>(*payload_opt);
+    streambufops::write_integer<uint64_t>(m_streambuf, *payload_opt);
 
     ec = co_await flush_packet();
     if (ec)
