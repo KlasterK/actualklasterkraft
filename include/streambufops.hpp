@@ -7,8 +7,11 @@
 #include <expected>
 #include <optional>
 
+class Session;
+
 namespace streambufops
 {
+
     inline std::expected<int32_t, boost::system::error_code> read_vari32(
         boost::asio::streambuf &streambuf)
     {

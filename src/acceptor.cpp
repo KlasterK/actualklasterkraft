@@ -21,7 +21,7 @@ void Acceptor::accept()
 
             boost::intrusive_ptr session { new Session {
                 m_io, std::move(*m_opt_sock) } };
-            session->next_packet();
+            session->begin();
             accept();
         });
 }
