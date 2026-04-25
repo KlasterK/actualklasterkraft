@@ -1,13 +1,10 @@
 #include "session.hpp"
-#include "errc.hpp"
 #include "statecoroutines.hpp"
 #include "streambufops.hpp"
 #include <boost/intrusive_ptr.hpp>
 #include <print>
 
-namespace asio = boost::asio;
-namespace sys = boost::system;
-using tcp = boost::asio::ip::tcp;
+using boost::asio::ip::tcp;
 
 auto getlmb() { }
 
@@ -32,7 +29,7 @@ Session::Session(
 {
     std::ostringstream oss;
     oss << m_sock.remote_endpoint();
-    m_remote_endpoint_name = std::move(oss.str());
+    m_remote_endpoint_name = oss.str();
 }
 
 void Session::begin()

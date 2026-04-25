@@ -1,10 +1,10 @@
 #include "packetops.hpp"
 #include "errc.hpp"
 #include "session.hpp"
+#include <boost/asio.hpp>
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
-using boost::asio::ip::tcp;
 
 boost::asio::awaitable<std::expected<size_t, boost::system::error_code>>
 packetops::await_for_packet(Session &session)
