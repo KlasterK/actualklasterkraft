@@ -3,6 +3,8 @@
 
 #include "errc.hpp"
 #include <boost/asio.hpp>
+#include <boost/endian.hpp>
+#include <boost/endian/conversion.hpp>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -56,15 +58,16 @@ namespace streambufops
     {
         T value { };
         if (streambuf.sgetn(reinterpret_cast<char *>(&value), sizeof(T))
-            < sizeof(T))
+            < std::streamsize(sizeof(T)))
             return std::nullopt;
 
-        return value;
+        return boost::endian::big_to_native(value);
     }
 
     template <std::integral T>
     inline void write_integer(boost::asio::streambuf &streambuf, T value)
     {
+        value = boost::endian::native_to_big(value);
         streambuf.sputn(reinterpret_cast<char *>(&value), sizeof(T));
     }
 }
