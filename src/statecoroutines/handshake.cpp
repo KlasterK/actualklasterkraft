@@ -53,7 +53,15 @@ asio::awaitable<sys::error_code> statecoroutines::handshake(
 
     // Next State
     vari32_result = streambufops::read_vari32(session->get_streambuf());
-    if (!vari32_result || *vari32_result != 1) // Status
+    if (!vari32_result)
+        co_return close();
+
+    asio::awaitable<sys::error_code> next_coro { };
+    if (*vari32_result == 1) // Status
+        next_coro = statecoroutines::status(session);
+    else if (*vari32_result == 2 || *vari32_result == 3) // Login or Transfer
+        next_coro = statecoroutines::login(session, *vari32_result == 3);
+    else
         co_return close();
 
     if (session->get_streambuf().in_avail() != 0)
@@ -61,7 +69,7 @@ asio::awaitable<sys::error_code> statecoroutines::handshake(
 
     session->get_streambuf().consume(session->get_streambuf().size());
 
-    asio::co_spawn(session->get_io(), statecoroutines::status(session),
+    asio::co_spawn(session->get_io(), std::move(next_coro),
         [session](std::exception_ptr exc_ptr, sys::error_code ec)
         { session->handle_coroutine_finished(exc_ptr, ec); });
 

@@ -18,6 +18,9 @@ namespace statecoroutines
 
     asio::awaitable<sys::error_code> status(
         boost::intrusive_ptr<Session> session);
+
+    asio::awaitable<sys::error_code> login(
+        boost::intrusive_ptr<Session> session, bool is_transfer);
 }
 
 #endif // ACTKK_STATECOROUTINES_HPP
