@@ -2,6 +2,7 @@
 #include "session.hpp"
 #include <boost/intrusive_ptr.hpp>
 #include <iostream>
+#include <print>
 
 Acceptor::Acceptor(boost::asio::io_context &io, uint16_t port)
     : m_io(io)
@@ -14,8 +15,15 @@ void Acceptor::accept()
 {
     m_opt_sock.emplace(m_io);
     m_acceptor.async_accept(*m_opt_sock,
-        [this](const boost::system::error_code &err)
+        [this](boost::system::error_code ec)
         {
+            if (ec)
+            {
+                std::println("Connection acception error: {}\nStop accepting.",
+                    ec.what());
+                return;
+            }
+
             std::cout << "New connection from " << m_opt_sock->remote_endpoint()
                       << std::endl;
 
