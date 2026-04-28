@@ -6,11 +6,9 @@
 
 using boost::asio::ip::tcp;
 
-auto getlmb() { }
-
 void Session::print_streambuf()
 {
-    for (;;)
+    for (std::print("\t");;)
     {
         int byte = m_streambuf.sbumpc();
         if (byte < 0)

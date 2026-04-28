@@ -117,10 +117,11 @@ asio::awaitable<sys::error_code> statecoroutines::login(
         session->get_streambuf().consume(session->get_streambuf().size());
     }
 
-    for (;;)
-    {
-        co_await asio::post();
-    }
+    asio::co_spawn(session->get_io(),
+        statecoroutines::configuration(
+            session, std::move(player_name), std::move(player_uuid)),
+        [session](std::exception_ptr exc_ptr, sys::error_code ec)
+        { session->handle_coroutine_finished(exc_ptr, ec); });
 
     co_return sys::error_code { };
 }

@@ -25,9 +25,9 @@ public:
     boost::asio::streambuf &get_streambuf() { return m_streambuf; }
     const boost::asio::streambuf &get_streambuf() const { return m_streambuf; }
 
-private:
     void print_streambuf();
 
+private:
     boost::asio::io_context &m_io;
     boost::asio::ip::tcp::socket m_sock;
     boost::asio::streambuf m_streambuf;

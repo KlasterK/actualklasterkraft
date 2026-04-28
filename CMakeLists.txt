@@ -7,6 +7,7 @@ find_package(Boost REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 add_executable(actualklasterkraft
+    src/statecoroutines/configuration.cpp
     src/statecoroutines/handshake.cpp
     src/statecoroutines/login.cpp
     src/statecoroutines/status.cpp
@@ -19,6 +20,7 @@ add_executable(actualklasterkraft
     include/acceptor.hpp
     include/errc.hpp
     include/packetops.hpp
+    include/prebuiltconfiguration.hpp
     include/session.hpp
     include/statecoroutines.hpp
     include/streambufops.hpp

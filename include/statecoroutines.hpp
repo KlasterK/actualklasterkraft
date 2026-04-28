@@ -21,6 +21,10 @@ namespace statecoroutines
 
     asio::awaitable<sys::error_code> login(
         boost::intrusive_ptr<Session> session, bool is_transfer);
+
+    asio::awaitable<sys::error_code> configuration(
+        boost::intrusive_ptr<Session> session, std::string &&player_name,
+        std::array<uint8_t, 16> &&player_uuid);
 }
 
 #endif // ACTKK_STATECOROUTINES_HPP
