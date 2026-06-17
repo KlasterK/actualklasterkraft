@@ -11,7 +11,7 @@ Acceptor::Acceptor(boost::asio::io_context &io, uint16_t port)
 {
 }
 
-void Acceptor::accept()
+void Acceptor::start()
 {
     m_opt_sock.emplace(m_io);
     m_acceptor.async_accept(*m_opt_sock,
@@ -30,6 +30,6 @@ void Acceptor::accept()
             boost::intrusive_ptr session { new Session {
                 m_io, std::move(*m_opt_sock) } };
             session->begin();
-            accept();
+            start();
         });
 }

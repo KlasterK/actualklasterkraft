@@ -5,7 +5,7 @@ int main()
 {
     boost::asio::io_context io;
     Acceptor acceptor(io, 25565);
-    acceptor.accept();
+    acceptor.start();
     io.run();
     return 0;
 }

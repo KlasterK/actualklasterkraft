@@ -4,3 +4,4 @@ BreakBeforeInheritanceComma: true
 PointerAlignment: Right
 NamespaceIndentation: All
 ColumnLimit: 80
+ReflowComments: false

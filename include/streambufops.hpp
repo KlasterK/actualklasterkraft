@@ -58,7 +58,7 @@ namespace streambufops
     {
         T value { };
         if (streambuf.sgetn(reinterpret_cast<char *>(&value), sizeof(T))
-            < std::streamsize(sizeof(T)))
+            < static_cast<std::streamsize>(sizeof(T)))
             return std::nullopt;
 
         return boost::endian::big_to_native(value);

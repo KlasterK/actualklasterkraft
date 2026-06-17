@@ -7,7 +7,7 @@ class Acceptor
 {
 public:
     Acceptor(boost::asio::io_context &io, uint16_t port);
-    void accept();
+    void start();
 
 private:
     boost::asio::io_context &m_io;
