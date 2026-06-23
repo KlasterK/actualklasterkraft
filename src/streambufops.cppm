@@ -1,21 +1,20 @@
-#ifndef ACTKK_STREAMBUFOPS_HPP
-#define ACTKK_STREAMBUFOPS_HPP
-
-#include "errc.hpp"
+module;
 #include <boost/asio.hpp>
 #include <boost/endian.hpp>
-#include <boost/endian/conversion.hpp>
 #include <cstdint>
 #include <expected>
 #include <optional>
+export module actualklasterkraft.streambufops;
 
-class Session;
+import actualklasterkraft.errc;
 
-namespace streambufops
+namespace asio = boost::asio;
+namespace sys = boost::system;
+
+export namespace streambufops
 {
-
-    inline std::expected<int32_t, boost::system::error_code> read_vari32(
-        boost::asio::streambuf &streambuf)
+    std::expected<int32_t, sys::error_code> read_vari32(
+        asio::streambuf &streambuf)
     {
         int byte { };
         int32_t value { };
@@ -25,7 +24,7 @@ namespace streambufops
         {
             byte = streambuf.sbumpc();
             if (byte < 0)
-                return std::unexpected(boost::asio::error::eof);
+                return std::unexpected(asio::error::eof);
 
             value |= (byte & 0x7F);
             if ((byte & 0x80) == 0)
@@ -38,7 +37,7 @@ namespace streambufops
         return value;
     }
 
-    inline void write_vari32(boost::asio::streambuf &streambuf, int32_t value)
+    void write_vari32(asio::streambuf &streambuf, int32_t value)
     {
         for (;;)
         {
@@ -54,7 +53,7 @@ namespace streambufops
     }
 
     template <std::integral T>
-    inline std::optional<T> read_integer(boost::asio::streambuf &streambuf)
+    std::optional<T> read_integer(asio::streambuf &streambuf)
     {
         T value { };
         if (streambuf.sgetn(reinterpret_cast<char *>(&value), sizeof(T))
@@ -65,11 +64,9 @@ namespace streambufops
     }
 
     template <std::integral T>
-    inline void write_integer(boost::asio::streambuf &streambuf, T value)
+    void write_integer(boost::asio::streambuf &streambuf, T value)
     {
         value = boost::endian::native_to_big(value);
         streambuf.sputn(reinterpret_cast<char *>(&value), sizeof(T));
     }
 }
-
-#endif // ACTKK_STREAMBUFOPS_HPP
