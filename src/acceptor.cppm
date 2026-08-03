@@ -2,10 +2,10 @@ module;
 #include <boost/asio.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
-#include <iostream>
 #include <print>
 export module actualklasterkraft.acceptor;
 
+import actualklasterkraft.formatters;
 import actualklasterkraft.session;
 import actualklasterkraft.statecoroutines.handshake;
 
@@ -37,8 +37,8 @@ public:
                     return;
                 }
 
-                std::cout << "New connection from "
-                          << m_opt_sock->remote_endpoint() << std::endl;
+                std::println(
+                    "New connection from {}", m_opt_sock->remote_endpoint());
 
                 boost::intrusive_ptr session { new Session {
                     m_io, std::move(*m_opt_sock) } };

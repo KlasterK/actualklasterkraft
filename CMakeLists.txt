@@ -23,6 +23,7 @@ target_sources(actualklasterkraft PUBLIC
         src/statecoroutines/status.cppm
         src/acceptor.cppm
         src/errc.cppm
+        src/formatters.cppm
         src/packetops.cppm
         src/prebuiltconfiguration.cppm
         src/session.cppm
