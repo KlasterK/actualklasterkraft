@@ -3,96 +3,100 @@ module;
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <boost/uuid.hpp>
+#include <new>
 #include <openssl/md5.h>
 #include <print>
 export module actualklasterkraft.statecoroutines.configuration;
 
 import actualklasterkraft.errc;
+import actualklasterkraft.nbtbuilder;
 import actualklasterkraft.packetops;
 import actualklasterkraft.prebuiltconfiguration;
 import actualklasterkraft.session;
+import actualklasterkraft.formatters;
 import actualklasterkraft.streambufops;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
 
+asio::awaitable<void> graceful_disconnect(Session &session, std::string_view sv)
+{
+    session.get_streambuf().consume(session.get_streambuf().size());
+
+    session.get_streambuf().sputc(0x02); // id Disconnect (configuration)
+    NBTBuilder(std::ostreambuf_iterator(&session.get_streambuf()))
+        << nbtbuilderdefinitions::String << sv;
+
+    sys::error_code ec = co_await packetops::flush_packet(session);
+    if (ec)
+        std::println(
+            "\tCan't send disconnect message to the client (error code: {}; reason: {})",
+            ec, sv);
+    else
+        std::println("\tClient was disconnected with reason: {}", sv);
+
+    session.get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
+    session.get_socket().close();
+}
+
 export namespace statecoroutines
 {
-    asio::awaitable<sys::error_code> configuration(
-        boost::intrusive_ptr<Session> session, std::string &&player_name,
-        std::array<uint8_t, 16> &&player_uuid)
+    asio::awaitable<void> configuration(boost::intrusive_ptr<Session> session,
+        std::string &&player_name, std::array<uint8_t, 16> &&player_uuid)
     {
+        sys::error_code ec { };
         std::println("\tstate_configuration");
 
-        // Clientbound Known Packets
-        session->get_streambuf().sputn(
-            reinterpret_cast<const char *>(
-                PrebuiltClientboundKnownPackets.data()),
-            PrebuiltClientboundKnownPackets.size());
-        auto ec = co_await packetops::flush_packet(*session);
-        if (ec)
-            co_return ec;
+        // For Configuration, we should synchronise our game data with client's game data.
+        // We'll ignore serverbound packets for simplicity.
 
-        // Registry Data (multiple)
-        // PrebuiltRegistryData is a tuple of arrays
-
-        // Accumulate error codes and do nothing if an error has present in a
-        // previous call
-        sys::error_code accumulated_ec { };
-        auto send_pkt = [&](const auto &array) -> asio::awaitable<void>
+        auto packet_it = PrebuiltConfigurationStatePackets.data.begin();
+        for (size_t packet_length : PrebuiltConfigurationStatePackets.lengths)
         {
-            if (accumulated_ec)
-                co_return;
-            session->get_streambuf().sputn(
-                reinterpret_cast<const char *>(array.data()), array.size());
-            accumulated_ec = co_await packetops::flush_packet(*session);
-        };
+            if (packet_length == 0)
+                break;
 
-        // Apply the lambda for each array in PrebuiltRegistryData
-        co_await std::apply([&](auto &&...arrays) -> asio::awaitable<void>
-            { (co_await send_pkt(arrays), ...); }, PrebuiltRegistryData);
-
-        if (accumulated_ec)
-            co_return accumulated_ec;
-
-        // Update Tags
-        session->get_streambuf().sputn(
-            reinterpret_cast<const char *>(PrebuiltUpdateTags.data()),
-            PrebuiltUpdateTags.size());
-        ec = co_await packetops::flush_packet(*session);
-        if (ec)
-            co_return ec;
+            ec = co_await packetops::flush_packet(
+                *session, asio::buffer(packet_it, packet_length));
+            if (ec)
+                co_return co_await graceful_disconnect(*session,
+                    std::format(
+                        "Protocol Desync: couldn't send packet due to error: {}",
+                        ec));
+            packet_it += packet_length;
+        }
 
         // Finish Configuration (no fields)
         session->get_streambuf().sputc(0x03);
         ec = co_await packetops::flush_packet(*session);
         if (ec)
-            co_return ec;
+            co_return co_await graceful_disconnect(*session,
+                std::format(
+                    "Protocol Desync: couldn't send packet due to error: {}",
+                    ec));
 
         // Ignore any packets until Acknowledge Finish Configuration
-        for (int i { }; i < 2; ++i)
+        for (;;)
         {
-            auto packet_result = co_await packetops::await_for_packet(*session);
-            if (!packet_result)
-                co_return packet_result.error();
+            ec = co_await packetops::await_for_packet(*session);
+            if (ec)
+                co_return co_await graceful_disconnect(*session,
+                    std::format(
+                        "Protocol Desync: could't get packet Login Start due to error: {}",
+                        ec));
 
-            if (session->get_streambuf().sbumpc()
-                == 0x03) // Acknowledge Finish Configuration
+            // Acknowledge Finish Configuration
+            if (session->get_streambuf().sbumpc() == 0x03)
             {
                 // No fields
-                if (session->get_streambuf().in_avail() != 0)
-                    co_return MCProtocolError::ExcessPacketData;
-
-                session->get_streambuf().consume(1);
+                if (session->get_streambuf().size() > 0)
+                    co_return co_await graceful_disconnect(
+                        *session, "Protocol Desync: excess packet data");
                 break;
             }
-
             session->get_streambuf().consume(session->get_streambuf().size());
         }
 
-        asio::steady_timer timer(session->get_io(), std::chrono::seconds(10));
-        co_await timer.async_wait();
-
-        co_return sys::error_code { };
+        // We're in Play state now
     }
 }

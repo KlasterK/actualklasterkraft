@@ -18,8 +18,7 @@ export class Acceptor
 public:
     Acceptor(asio::io_context &io, uint16_t port)
         : m_io(io)
-        , m_acceptor(io,
-              tcp::endpoint(tcp::v4(), port))
+        , m_acceptor(io, tcp::endpoint(tcp::v4(), port))
     {
     }
 
@@ -44,8 +43,8 @@ public:
                     m_io, std::move(*m_opt_sock) } };
 
                 asio::co_spawn(m_io, statecoroutines::handshake(session),
-                    [session](std::exception_ptr exc_ptr, sys::error_code ec)
-                    { session->handle_coroutine_finished(exc_ptr, ec); });
+                    [session](std::exception_ptr exc_ptr)
+                    { session->handle_coroutine_finished(exc_ptr); });
 
                 start();
             });

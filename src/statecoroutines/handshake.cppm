@@ -16,73 +16,59 @@ namespace sys = boost::system;
 
 export namespace statecoroutines
 {
-    asio::awaitable<sys::error_code> handshake(
-        boost::intrusive_ptr<Session> session)
+    asio::awaitable<void> handshake(boost::intrusive_ptr<Session> session)
     {
+        sys::error_code ec { };
         std::println("\tstate_handshake");
 
-        auto close = [&]
+        auto fail = [&]
         {
+            std::println("\tProtocol desynced. Is it a Minecraft client?");
+            session->get_socket().shutdown(
+                asio::ip::tcp::socket::shutdown_both);
             session->get_socket().close();
-            return sys::error_code { };
         };
 
-        auto packet_result = co_await packetops::await_for_packet(*session);
-        if (!packet_result)
-            co_return close();
+        if (co_await packetops::await_for_packet(*session))
+            co_return fail();
 
         // Packet ID
         if (session->get_streambuf().sbumpc() != 0x00)
-            co_return close();
+            co_return fail();
 
-        // Protocol Version
-        auto vari32_result
-            = streambufops::read_vari32(session->get_streambuf());
-        if (!vari32_result)
-            co_return close();
-        // Don't check version for now
-        std::println("\tProtocol Version: {}", *vari32_result);
+        // Protocol Version (won't check it for now)
+        int32_t proto_version
+            = streambufops::read_v32(session->get_streambuf(), ec);
+        if (ec)
+            co_return fail();
+        std::println("\tProtocol Version: {}", proto_version);
 
-        // Server Address
-        vari32_result = streambufops::read_vari32(session->get_streambuf());
-        if (!vari32_result)
-            co_return close();
+        // Server Address length
+        int32_t server_addr_len
+            = streambufops::read_v32(session->get_streambuf(), ec);
+        if (ec || server_addr_len < 1 || server_addr_len > 255)
+            co_return fail();
 
-        // Don't use this string, skip bytes. But can't move gptr in streambuf
-        // without reading, use a temp buffer to do it.
-        {
-            std::string dummy(*vari32_result, '\0');
-            session->get_streambuf().sgetn(dummy.data(), *vari32_result);
-        }
+        // Skip the following string and next field which is u16 Server Port
+        session->get_streambuf().consume(server_addr_len + 2);
 
-        // Server Port, u16, won't use
-        if (!streambufops::read_integer<uint16_t>(session->get_streambuf())
-                .has_value())
-            co_return close();
+        int32_t intent = streambufops::read_v32(session->get_streambuf(), ec);
+        if (ec)
+            co_return fail();
 
-        // Next State
-        vari32_result = streambufops::read_vari32(session->get_streambuf());
-        if (!vari32_result)
-            co_return close();
-
-        asio::awaitable<sys::error_code> next_coro { };
-        if (*vari32_result == 1) // Status
+        asio::awaitable<void> next_coro { };
+        if (intent == 1) // Status
             next_coro = statecoroutines::status(session);
-        else if (*vari32_result == 2
-            || *vari32_result == 3) // Login or Transfer
-            next_coro = statecoroutines::login(session, *vari32_result == 3);
+        else if (intent == 2 || intent == 3) // Login or Transfer
+            next_coro = statecoroutines::login(session, intent == 3);
         else
-            co_return close();
+            co_return fail();
 
-        if (session->get_streambuf().in_avail() != 0)
-            co_return close();
-
-        session->get_streambuf().consume(session->get_streambuf().size());
+        if (session->get_streambuf().size() > 0)
+            co_return fail();
 
         asio::co_spawn(session->get_io(), std::move(next_coro),
-            [session](std::exception_ptr exc_ptr, sys::error_code ec)
-            { session->handle_coroutine_finished(exc_ptr, ec); });
-
-        co_return boost::system::error_code { };
+            [session](std::exception_ptr exc_ptr)
+            { session->handle_coroutine_finished(exc_ptr); });
     }
 }

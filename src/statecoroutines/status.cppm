@@ -8,6 +8,7 @@ module;
 export module actualklasterkraft.statecoroutines.status;
 
 import actualklasterkraft.errc;
+import actualklasterkraft.formatters;
 import actualklasterkraft.packetops;
 import actualklasterkraft.session;
 import actualklasterkraft.streambufops;
@@ -17,23 +18,30 @@ namespace sys = boost::system;
 
 export namespace statecoroutines
 {
-    asio::awaitable<sys::error_code> status(
-        boost::intrusive_ptr<Session> session)
+    asio::awaitable<void> status(boost::intrusive_ptr<Session> session)
     {
+        sys::error_code ec { };
         std::println("\tstate_status");
 
-        // Getting packet Status Request
-        auto packet_result = co_await packetops::await_for_packet(*session);
-        if (!packet_result)
-            co_return packet_result.error();
+        auto fail = [&session](sys::error_code a_ec)
+        {
+            std::println(
+                "\tProtocol desynced. Is it a Minecraft client? (error code: {})",
+                a_ec);
+            session->get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
+            session->get_socket().close();
+        };
 
-        // Packet ID
+        // Should get packet Status Request
+        ec = co_await packetops::await_for_packet(*session);
+        if (ec)
+            co_return fail(ec);
+
         if (session->get_streambuf().sbumpc() != 0x00)
-            co_return MCProtocolError::UnexpectedPacketID;
+            co_return fail(MCProtocolError::UnexpectedPacketID);
 
-        if (session->get_streambuf().in_avail() != 0)
-            co_return MCProtocolError::ExcessPacketData;
-        session->get_streambuf().consume(session->get_streambuf().size());
+        if (session->get_streambuf().size() > 0)
+            co_return fail(MCProtocolError::ExcessPacketData);
 
         static constexpr std::string_view ExampleResponse = R"({
             "version": {
@@ -46,49 +54,46 @@ export namespace statecoroutines
                 "sample": []
             },
             "description": {
-                "text": "Hello, world!"
+                "text": "Hello World!"
             },
             "enforcesSecureChat": false
         })";
 
-        session->get_streambuf().sputc(0x00); // Status Response
-        streambufops::write_vari32(
-            session->get_streambuf(), ExampleResponse.size());
-        session->get_streambuf().sputn(
-            ExampleResponse.data(), ExampleResponse.size());
-
-        auto ec = co_await packetops::flush_packet(*session);
-        if (ec)
-            co_return ec;
-
-        // Getting packet Ping Request
-        packet_result = co_await packetops::await_for_packet(*session);
-        if (!packet_result)
-            co_return packet_result.error();
-
-        // Packet ID
-        if (session->get_streambuf().sbumpc() != 0x01)
-            co_return MCProtocolError::UnexpectedPacketID;
-
-        auto payload_opt
-            = streambufops::read_integer<uint64_t>(session->get_streambuf());
-        if (!payload_opt)
-            co_return MCProtocolError::UnsufficientPacketData;
-
-        if (session->get_streambuf().in_avail() != 0)
-            co_return MCProtocolError::ExcessPacketData;
-        session->get_streambuf().consume(session->get_streambuf().size());
-
-        // Pong Response
-        session->get_streambuf().sputc(0x01); // ID
-        streambufops::write_integer<uint64_t>(
-            session->get_streambuf(), *payload_opt);
+        // send Status Response
+        session->get_streambuf().sputc(0x00); // id
+        streambufops::write_string(session->get_streambuf(), ExampleResponse);
 
         ec = co_await packetops::flush_packet(*session);
         if (ec)
-            co_return ec;
+            co_return fail(ec);
 
+        // Should get packet Ping Request
+        ec = co_await packetops::await_for_packet(*session);
+        if (ec)
+            co_return fail(ec);
+
+        if (session->get_streambuf().sbumpc() != 0x01)
+            co_return fail(MCProtocolError::UnexpectedPacketID);
+
+        auto payload = streambufops::read_integer<uint64_t>(
+            session->get_streambuf(), ec);
+        if (ec)
+            co_return fail(ec);
+
+        if (session->get_streambuf().size() > 0)
+            co_return fail(MCProtocolError::ExcessPacketData);
+
+        // Pong Response
+        session->get_streambuf().sputc(0x01); // id
+        streambufops::write_integer<uint64_t>(
+            session->get_streambuf(), payload);
+
+        ec = co_await packetops::flush_packet(*session);
+        if (ec)
+            co_return fail(ec);
+
+            
+        session->get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
         session->get_socket().close();
-        co_return boost::system::error_code { };
     }
 }

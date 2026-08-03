@@ -2,6 +2,7 @@ module;
 #include <boost/asio.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <boost/uuid.hpp>
 #include <coroutine>
 #include <cstdint>
@@ -11,6 +12,7 @@ module;
 export module actualklasterkraft.statecoroutines.login;
 
 import actualklasterkraft.errc;
+import actualklasterkraft.formatters;
 import actualklasterkraft.packetops;
 import actualklasterkraft.session;
 import actualklasterkraft.statecoroutines.configuration;
@@ -19,7 +21,8 @@ import actualklasterkraft.streambufops;
 namespace asio = boost::asio;
 namespace sys = boost::system;
 
-std::array<uint8_t, 16> generate_java_uuid3(std::span<const uint8_t> data)
+[[nodiscard]] std::array<uint8_t, 16> generate_java_uuid3(
+    std::span<const uint8_t> data)
 {
     std::array<uint8_t, 16> uuid;
     MD5(data.data(), data.size(), uuid.data());
@@ -30,65 +33,84 @@ std::array<uint8_t, 16> generate_java_uuid3(std::span<const uint8_t> data)
     return uuid;
 }
 
-asio::awaitable<sys::error_code> login_disconnect(
+asio::awaitable<void> login_disconnect(
     Session &session, std::string_view json_reason)
 {
     session.get_streambuf().consume(session.get_streambuf().size());
-    session.get_streambuf().sputc(0x00); // Login Disconnect
-    streambufops::write_vari32(session.get_streambuf(), json_reason.size());
-    session.get_streambuf().sputn(json_reason.data(), json_reason.size());
+
+    session.get_streambuf().sputc(0x00); // id Login Disconnect
+    streambufops::write_string(session.get_streambuf(), json_reason);
 
     auto ec = co_await packetops::flush_packet(session);
     if (ec)
-        co_return ec;
+        std::println(
+            "\tCan't send disconnect message to the client (error code: {}; reason: {})",
+            ec, json_reason);
+    else
+        std::println("\tClient was disconnected with reason: {}", json_reason);
 
+    session.get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
     session.get_socket().close();
-    co_return sys::error_code { };
 }
 
 export namespace statecoroutines
 {
-    asio::awaitable<sys::error_code> login(
+    asio::awaitable<void> login(
         boost::intrusive_ptr<Session> session, bool is_transfer)
     {
         (void)is_transfer;
+        sys::error_code ec { };
         std::println("\tstate_login");
 
-        auto packet_result = co_await packetops::await_for_packet(*session);
-        if (!packet_result)
-            co_return packet_result.error();
+        ec = co_await packetops::await_for_packet(*session);
+        if (ec)
+            co_return co_await login_disconnect(*session,
+                std::format(
+                    "{{\"text\": \"Protocol Desync: could't get packet Login Start due to error: {}\"}}",
+                    ec));
 
         if (session->get_streambuf().sbumpc() != 0x00) // Login Start
-            co_return MCProtocolError::UnexpectedPacketID;
+            co_return co_await login_disconnect(*session,
+                "{\"text\": \"Protocol Desync: unexpected packet ID (should be Login Start)\"}");
 
-        auto vari32_result
-            = streambufops::read_vari32(session->get_streambuf());
-        if (!vari32_result)
-            co_return vari32_result.error();
-
-        if (*vari32_result > 16)
+        int32_t name_len = streambufops::read_v32(session->get_streambuf(), ec);
+        if (ec)
+            co_return co_await login_disconnect(*session,
+                std::format(
+                    "{{\"text\": \"Protocol Desync: error while parsing packet: {}\"}}",
+                    ec));
+        if (name_len < 1)
+            co_return co_await login_disconnect(*session,
+                "{\"text\":\"Your name can't be empty or negative size.\"}");
+        if (name_len > 16)
             co_return co_await login_disconnect(*session,
                 "{\"text\":\"Your name is longer than 16 characters.\"}");
 
-        std::string player_name(*vari32_result, '\0');
-        session->get_streambuf().sgetn(player_name.data(), *vari32_result);
+        // Needed to generate offline player UUID
+        constexpr std::string_view UUIDDomainPrefix = "OfflinePlayer:";
+        // Allocate enough memory for prefix and name
+        std::string prefixed_player_name(
+            name_len + UUIDDomainPrefix.size(), '\0');
+        // Copy prefix into the beginning
+        std::ranges::copy(UUIDDomainPrefix, prefixed_player_name.begin());
+        // View of the name only
+        std::string_view player_name_view(
+            prefixed_player_name.data() + UUIDDomainPrefix.size(), name_len);
+        // Copy the name after the prefix
+        session->get_streambuf().sgetn(
+            prefixed_player_name.data() + UUIDDomainPrefix.size(), name_len);
 
-        // Player UUID (ignored, server will assign a UUID itself)
-        {
-            std::array<char, 16> dummy { };
-            if (session->get_streambuf().sgetn(dummy.data(), dummy.size())
-                != dummy.size())
-                co_return MCProtocolError::UnsufficientPacketData;
-        }
+        // Player UUID from the packet (ignored, server will assign a UUID itself)
+        session->get_streambuf().consume(16);
 
-        if (session->get_streambuf().in_avail() != 0)
-            co_return MCProtocolError::ExcessPacketData;
-        session->get_streambuf().consume(session->get_streambuf().size());
+        if (session->get_streambuf().size() > 0)
+            co_return co_await login_disconnect(*session,
+                "{\"text\": \"Protocol Desync: excess packet data\"}");
 
         // Generate UUID for the player
         auto player_uuid = generate_java_uuid3(
-            { reinterpret_cast<const uint8_t *>(player_name.data()),
-                player_name.size() });
+            { reinterpret_cast<const uint8_t *>(prefixed_player_name.data()),
+                prefixed_player_name.size() });
 
         // Login Success
         session->get_streambuf().sputc(0x02);
@@ -97,30 +119,32 @@ export namespace statecoroutines
             reinterpret_cast<const char *>(player_uuid.data()),
             player_uuid.size());
         // Name
-        streambufops::write_vari32(
-            session->get_streambuf(), player_name.size());
-        session->get_streambuf().sputn(player_name.data(), player_name.size());
+        streambufops::write_string(session->get_streambuf(), player_name_view);
         // Properties (none, length = 0)
         session->get_streambuf().sputc(0x00);
 
-        auto ec = co_await packetops::flush_packet(*session);
+        ec = co_await packetops::flush_packet(*session);
         if (ec)
-            co_return ec;
+            co_return co_await login_disconnect(*session,
+                std::format(
+                    "{{\"text\": \"Protocol Desync: could't send packet due to error: {}\"}}",
+                    ec));
 
         // Ignore any packets until Login Acknowledged
         for (;;)
         {
-            packet_result = co_await packetops::await_for_packet(*session);
-            if (!packet_result)
-                co_return packet_result.error();
+            ec = co_await packetops::await_for_packet(*session);
+            if (ec)
+                co_return co_await login_disconnect(*session,
+                    std::format(
+                        "{{\"text\": \"Protocol Desync: could't receive packet due to error: {}\"}}",
+                        ec));
 
             if (session->get_streambuf().sbumpc() == 0x03) // Login Acknowledged
             {
-                // No fields
-                if (session->get_streambuf().in_avail() != 0)
-                    co_return MCProtocolError::ExcessPacketData;
-
-                session->get_streambuf().consume(1);
+                if (session->get_streambuf().size() > 0) // No fields
+                    co_return co_await login_disconnect(*session,
+                        "{\"text\": \"Protocol Desync: excess packet data\"}");
                 break;
             }
 
@@ -129,10 +153,8 @@ export namespace statecoroutines
 
         asio::co_spawn(session->get_io(),
             statecoroutines::configuration(
-                session, std::move(player_name), std::move(player_uuid)),
-            [session](std::exception_ptr exc_ptr, sys::error_code ec)
-            { session->handle_coroutine_finished(exc_ptr, ec); });
-
-        co_return sys::error_code { };
+                session, std::string(player_name_view), std::move(player_uuid)),
+            [session](std::exception_ptr exc_ptr)
+            { session->handle_coroutine_finished(exc_ptr); });
     }
 }

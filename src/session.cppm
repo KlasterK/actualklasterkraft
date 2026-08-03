@@ -4,8 +4,11 @@ module;
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <boost/system.hpp>
 #include <exception>
+#include <format>
 #include <print>
 export module actualklasterkraft.session;
+
+import actualklasterkraft.formatters;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -15,9 +18,24 @@ export class Session
     : public boost::intrusive_ref_counter<Session, boost::thread_unsafe_counter>
 {
 public:
-    Session(asio::io_context &io, tcp::socket &&sock);
-    void handle_coroutine_finished(
-        std::exception_ptr exc_ptr, sys::error_code ec);
+    Session(asio::io_context &io, tcp::socket &&sock)
+        : m_io(io)
+        , m_sock(std::move(sock))
+        , m_remote_endpoint_name(std::format("{}", m_sock.remote_endpoint()))
+    {
+    }
+
+    void handle_coroutine_finished(std::exception_ptr exc_ptr)
+    {
+        if (exc_ptr)
+            std::rethrow_exception(exc_ptr);
+
+        if (!m_sock.is_open())
+        {
+            std::println("Connection {} was closed", m_remote_endpoint_name);
+            return;
+        }
+    }
 
     asio::io_context &get_io() { return m_io; }
     const asio::io_context &get_io() const { return m_io; }
@@ -28,61 +46,22 @@ public:
     asio::streambuf &get_streambuf() { return m_streambuf; }
     const asio::streambuf &get_streambuf() const { return m_streambuf; }
 
-    void print_streambuf();
+    void print_streambuf()
+    {
+        for (std::print("\t");;)
+        {
+            int byte = m_streambuf.sbumpc();
+            if (byte < 0)
+                break;
+
+            std::print("{:02x} ", byte);
+        }
+        std::println();
+    }
 
 private:
     asio::io_context &m_io;
     tcp::socket m_sock;
-    asio::streambuf m_streambuf;
-
-    std::string m_remote_endpoint_name;
+    asio::streambuf m_streambuf { };
+    std::string m_remote_endpoint_name { };
 };
-
-// +----------------+
-// | IMPLEMENTATION |
-// +----------------+
-
-void Session::print_streambuf()
-{
-    for (std::print("\t");;)
-    {
-        int byte = m_streambuf.sbumpc();
-        if (byte < 0)
-            break;
-
-        std::print("{:02x} ", byte);
-    }
-    m_streambuf.consume(m_streambuf.size());
-    std::println();
-}
-
-Session::Session(asio::io_context &io, tcp::socket &&sock)
-    : m_io(io)
-    , m_sock(std::move(sock))
-{
-    std::ostringstream oss;
-    oss << m_sock.remote_endpoint();
-    m_remote_endpoint_name = oss.str();
-}
-
-void Session::handle_coroutine_finished(
-    std::exception_ptr exc_ptr, sys::error_code ec)
-{
-    if (exc_ptr)
-        std::rethrow_exception(exc_ptr);
-
-    if (ec)
-    {
-        std::println("Connection from {} caused an error: {}",
-            m_remote_endpoint_name, ec.what());
-        m_sock.close();
-        return;
-    }
-
-    if (!m_sock.is_open())
-    {
-        std::println(
-            "Connection {} was successfully closed", m_remote_endpoint_name);
-        return;
-    }
-}
