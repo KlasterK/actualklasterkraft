@@ -1,0 +1,281 @@
+module;
+#include <boost/container/flat_map.hpp>
+#include <boost/container/small_vector.hpp>
+#include <boost/smart_ptr/allocate_unique.hpp>
+#include <cstdint>
+#include <format>
+#include <memory>
+#include <memory_resource>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+export module actualklasterkraft.nbt;
+
+import actualklasterkraft.streambufops;
+import actualklasterkraft.templatelib;
+
+using boost::container::small_flat_map;
+using boost::container::small_vector;
+
+template <size_t NStatic> class PMRSmallString
+{
+public:
+    PMRSmallString() = default;
+    PMRSmallString(const PMRSmallString &) = default;
+    PMRSmallString(PMRSmallString &&) = default;
+    PMRSmallString &operator=(const PMRSmallString &) = default;
+    PMRSmallString &operator=(PMRSmallString &&) = default;
+
+    PMRSmallString(
+        std::pmr::memory_resource *mr = std::pmr::get_default_resource())
+        : m_vec(mr)
+    {
+    }
+
+    PMRSmallString(std::string_view str_to_copy,
+        std::pmr::memory_resource *mr = std::pmr::get_default_resource())
+        : m_vec(str_to_copy.begin(), str_to_copy.end(), mr)
+    {
+    }
+
+    PMRSmallString(const char *str_to_copy,
+        std::pmr::memory_resource *mr = std::pmr::get_default_resource())
+        : PMRSmallString(std::string_view(str_to_copy), mr)
+    {
+    }
+
+    operator std::string_view() const { return { m_vec.data(), m_vec.size() }; }
+
+    [[nodiscard]] size_t size() const { return m_vec.size(); }
+    [[nodiscard]] bool empty() const { return m_vec.empty(); }
+    [[nodiscard]] auto cbegin() const { return m_vec.cbegin(); }
+    [[nodiscard]] auto begin() const { return m_vec.begin(); }
+    [[nodiscard]] auto begin() { return m_vec.begin(); }
+    [[nodiscard]] auto cend() const { return m_vec.cend(); }
+    [[nodiscard]] auto end() const { return m_vec.end(); }
+    [[nodiscard]] auto end() { return m_vec.end(); }
+
+private:
+    boost::container::small_vector<char, NStatic,
+        std::pmr::polymorphic_allocator<char>>
+        m_vec;
+};
+
+template <typename T>
+using PMRUP = std::unique_ptr<T,
+    boost::alloc_deleter<T, std::pmr::polymorphic_allocator<T>>>;
+
+namespace TagType
+{
+    // clang-format off
+    constexpr uint8_t End       = 0;
+    constexpr uint8_t I8        = 1;
+    constexpr uint8_t I16       = 2;
+    constexpr uint8_t I32       = 3;
+    constexpr uint8_t I64       = 4;
+    constexpr uint8_t Float     = 5;
+    constexpr uint8_t Double    = 6;
+    constexpr uint8_t I8Array   = 7;
+    constexpr uint8_t String    = 8;
+    constexpr uint8_t List      = 9;
+    constexpr uint8_t Compound  = 10;
+    constexpr uint8_t I32Array  = 11;
+    constexpr uint8_t I64Array  = 12;
+    // clang-format on
+};
+
+template <typename... Ts> struct Overload : public Ts...
+{
+    using Ts::operator()...;
+};
+template <typename... Ts> Overload(Ts...) -> Overload<Ts...>;
+
+export namespace nbt
+{
+    using I8 = int8_t;
+    using I16 = int16_t;
+    using I32 = int32_t;
+    using I64 = int64_t;
+
+    using Name = PMRSmallString<16>;
+    using String = PMRSmallString<24>;
+
+    using I8Array = small_vector<I8, 16, std::pmr::polymorphic_allocator<I8>>;
+    using I32Array = small_vector<I32, 4, std::pmr::polymorphic_allocator<I32>>;
+    using I64Array = small_vector<I64, 2, std::pmr::polymorphic_allocator<I64>>;
+
+    namespace ListOf
+    {
+        // clang-format off
+        using I8                = small_vector  <I8,                        16, std::pmr::polymorphic_allocator<I8>>;
+        using I16               = small_vector  <I16,                       8,  std::pmr::polymorphic_allocator<I16>>;
+        using I32               = small_vector  <I32,                       4,  std::pmr::polymorphic_allocator<I32>>;
+        using I64               = small_vector  <I64,                       2,  std::pmr::polymorphic_allocator<I64>>;
+        using Float             = small_vector  <float,                     4,  std::pmr::polymorphic_allocator<float>>;
+        using Double            = small_vector  <double,                    2,  std::pmr::polymorphic_allocator<double>>;
+        using I8Array           = std::vector   <I8Array,                       std::pmr::polymorphic_allocator<I8Array>>;
+        using String            = std::vector   <String,                        std::pmr::polymorphic_allocator<String>>;
+        using ListUniquePtr     = small_vector  <PMRUP<struct List>,        1,  std::pmr::polymorphic_allocator<PMRUP<struct List>>>;
+        using CompoundUniquePtr = small_vector  <PMRUP<struct Compound>,    1,  std::pmr::polymorphic_allocator<PMRUP<struct Compound>>>;
+        using I32Array          = std::vector   <I32Array,                      std::pmr::polymorphic_allocator<I32Array>>;
+        using I64Array          = std::vector   <I64Array,                      std::pmr::polymorphic_allocator<I64Array>>;
+        // clang-format on
+    };
+
+    struct List
+        : std::variant<ListOf::I8, ListOf::I16, ListOf::I32, ListOf::I64,
+              ListOf::Float, ListOf::Double, ListOf::I8Array, ListOf::String,
+              ListOf::ListUniquePtr, ListOf::CompoundUniquePtr,
+              ListOf::I32Array, ListOf::I64Array>
+    {
+    };
+
+    using Any = std::variant<I8, I16, I32, I64, float, double, I8Array, String,
+        List, PMRUP<struct Compound>, I32Array, I64Array>;
+
+    struct Compound
+        : public small_flat_map<Name, Any, 1, std::less<Name>,
+              std::pmr::polymorphic_allocator<std::pair<Name, Any>>>
+    {
+    };
+
+    struct OmitName
+    {
+    };
+
+    struct OmitTagAndName
+    {
+    };
+
+    template <typename OutputIt>
+    OutputIt serialize(OutputIt it, const Any &root,
+        std::variant<std::string_view, OmitName, OmitTagAndName> name)
+    {
+        if (!std::holds_alternative<OmitTagAndName>(name))
+        {
+            *it++ = std::visit(
+                Overload {
+                    [](I8) { return TagType::I8; },
+                    [](I16) { return TagType::I16; },
+                    [](I32) { return TagType::I32; },
+                    [](I64) { return TagType::I64; },
+                    [](float) { return TagType::Float; },
+                    [](double) { return TagType::Double; },
+                    [](const I8Array &) { return TagType::I8Array; },
+                    [](const String &) { return TagType::String; },
+                    [](const List &) { return TagType::List; },
+                    [](const PMRUP<Compound> &) { return TagType::Compound; },
+                    [](const I32Array &) { return TagType::I32Array; },
+                    [](const I64Array &) { return TagType::I64Array; },
+                },
+                root);
+        }
+
+        if (auto *view = std::get_if<std::string_view>(&name))
+        {
+            assert(view->size() < 32700);
+            it = protocoltypes::write_integer<uint16_t>(it, view->size());
+            it = std::copy(view->begin(), view->end(), it);
+        }
+
+        std::visit(
+            Overload {
+                [&]<std::integral T>(T value)
+                { it = protocoltypes::write_integer(it, value); },
+                [&]<std::floating_point T>(T value)
+                { it = protocoltypes::write_real(it, value); },
+                [&](const I8Array &value)
+                {
+                    it = protocoltypes::write_integer<int32_t>(
+                        it, value.size());
+                    for (I8 i : value)
+                    {
+                        it = protocoltypes::write_integer(it, i);
+                    }
+                },
+                [&](const String &value)
+                {
+                    assert(value.size() < 32700);
+                    it = protocoltypes::write_integer<uint16_t>(
+                        it, value.size());
+                    it = std::copy(value.begin(), value.end(), it);
+                },
+                [&](const List &value)
+                {
+                    auto write = [&]<typename DoDeref>(uint8_t tag_type,
+                                     const auto &list, DoDeref)
+                    {
+                        *it++ = list.empty() ? TagType::End : tag_type;
+                        it = protocoltypes::write_integer<int32_t>(
+                            it, list.size());
+                        for (const auto &el : list)
+                        {
+                            if constexpr (DoDeref::value)
+                                it = serialize(it, *el, OmitTagAndName { });
+                            else
+                                it = serialize(it, el, OmitTagAndName { });
+                        }
+                    };
+
+                    std::visit(
+                        Overload {
+                            // clang-format off
+                            [](const ListOf::I8                 &list) { write(TagType::I8,         list, std::false_type{}); },
+                            [](const ListOf::I16                &list) { write(TagType::I16,        list, std::false_type{}); },
+                            [](const ListOf::I32                &list) { write(TagType::I32,        list, std::false_type{}); },
+                            [](const ListOf::I64                &list) { write(TagType::I64,        list, std::false_type{}); },
+                            [](const ListOf::Float              &list) { write(TagType::Float,      list, std::false_type{}); },
+                            [](const ListOf::Double             &list) { write(TagType::Double,     list, std::false_type{}); },
+                            [](const ListOf::I8Array            &list) { write(TagType::I8Array,    list, std::false_type{}); },
+                            [](const ListOf::String             &list) { write(TagType::String,     list, std::false_type{}); },
+                            [](const ListOf::ListUniquePtr      &list) { write(TagType::List,       list, std::true_type{});  },
+                            [](const ListOf::CompoundUniquePtr  &list) { write(TagType::Compound,   list, std::false_type{}); },
+                            [](const ListOf::I32Array           &list) { write(TagType::I32Array,   list, std::false_type{}); },
+                            [](const ListOf::I64Array           &list) { write(TagType::I64Array,   list, std::false_type{}); },
+                            // clang-format on
+                        },
+                        value);
+                },
+                [&](const PMRUP<Compound> &value)
+                {
+                    for (const auto &pair : *value)
+                    {
+                        it = serialize(it, pair.second, pair.first);
+                    }
+                    *it++ = TagType::End;
+                },
+                [&](const I32Array &value)
+                {
+                    it = protocoltypes::write_integer<int32_t>(
+                        it, value.size());
+                    for (I32 i : value)
+                    {
+                        it = protocoltypes::write_integer(it, i);
+                    }
+                },
+                [&](const I64Array &value)
+                {
+                    it = protocoltypes::write_integer<int32_t>(
+                        it, value.size());
+                    for (I64 i : value)
+                    {
+                        it = protocoltypes::write_integer(it, i);
+                    }
+                },
+            },
+            root);
+
+        return it;
+    }
+}
+
+void foo()
+{
+    nbt::serialize((uint8_t *)123,
+        boost::allocate_unique<nbt::Compound>(
+
+            std::pmr::new_delete_resource()),
+        "Test");
+    ;
+}

@@ -24,6 +24,7 @@ target_sources(actualklasterkraft PUBLIC
         src/acceptor.cppm
         src/errc.cppm
         src/formatters.cppm
+        src/nbtbuilder.cppm
         src/packetops.cppm
         src/prebuiltconfiguration.cppm
         src/session.cppm

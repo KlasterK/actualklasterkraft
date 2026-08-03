@@ -1,0 +1,362 @@
+module;
+#include <boost/container/flat_map.hpp>
+#include <boost/container/small_vector.hpp>
+#include <cstdint>
+#include <format>
+#include <memory>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+export module actualklasterkraft.nbt;
+
+import actualklasterkraft.streambufops;
+import actualklasterkraft.templatelib;
+
+using boost::container::small_flat_map;
+using boost::container::small_vector;
+
+namespace nbt
+{
+    export enum class TypeID {
+        End = 0, //!< Not used and mustn't appear in `nbt::Traits`
+        I8,
+        I16,
+        I32,
+        I64,
+        Float,
+        Double,
+        I8Array,
+        String,
+        List,
+        Compound,
+        I32Array,
+        I64Array,
+    };
+
+    export template <typename Allocator> struct Traits
+    {
+        template <typename T>
+        using AlRebind =
+            typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
+
+        class Any
+        {
+        public:
+            virtual ~Any() = default;
+
+            TypeID get_type_id() const { return m_type_id; }
+
+        protected:
+            Any(TypeID t)
+                : m_type_id(t)
+            {
+            }
+
+        private:
+            TypeID m_type_id;
+        };
+
+        using AnyUP = actualtemplatelib::AlUniquePtr<Any, AlRebind<Any>>;
+
+        template <typename T, typename... Args>
+        [[nodiscard]] static AnyUP make_anyup(
+            Allocator &&allocator, Args &&...args)
+        {
+            return AnyUP { new (AlRebind<T>(allocator).allocate(1))
+                               T(std::forward<Args>(args)...),
+                allocator };
+        }
+
+        class I8 final : public Any
+        {
+        public:
+            int8_t data { };
+            I8(int8_t v)
+                : Any(TypeID::I8)
+                , data(v)
+            {
+            }
+        };
+
+        class I16 final : public Any
+        {
+        public:
+            int16_t data { };
+            I16(int16_t v)
+                : Any(TypeID::I16)
+                , data(v)
+            {
+            }
+        };
+
+        class I32 final : public Any
+        {
+        public:
+            int32_t data { };
+            I32(int32_t v)
+                : Any(TypeID::I32)
+                , data(v)
+            {
+            }
+        };
+
+        class I64 final : public Any
+        {
+        public:
+            int64_t data { };
+            I64(int64_t v)
+                : Any(TypeID::I64)
+                , data(v)
+            {
+            }
+        };
+
+        class Float final : public Any
+        {
+        public:
+            float data { };
+            Float(float v)
+                : Any(TypeID::Float)
+                , data(v)
+            {
+            }
+        };
+
+        class Double final : public Any
+        {
+        public:
+            double data { };
+            Double(double v)
+                : Any(TypeID::Double)
+                , data(v)
+            {
+            }
+        };
+
+        class I8Array final : public Any
+        {
+        public:
+            std::vector<int8_t, AlRebind<int8_t>> data { };
+            I8Array(decltype(data) &&v = { })
+                : Any(TypeID::I8Array)
+                , data(std::move(v))
+            {
+            }
+        };
+
+        class I32Array final : public Any
+        {
+        public:
+            small_vector<int32_t, 4, AlRebind<int32_t>> data { };
+            I32Array(decltype(data) &&v = { })
+                : Any(TypeID::I32Array)
+                , data(std::move(v))
+            {
+            }
+        };
+
+        class I64Array final : public Any
+        {
+        public:
+            std::vector<int64_t, AlRebind<int64_t>> data { };
+            I64Array(decltype(data) &&v = { })
+                : Any(TypeID::I64Array)
+                , data(std::move(v))
+            {
+            }
+        };
+
+        class String final : public Any
+        {
+        public:
+            actualtemplatelib::SmallString<32, AlRebind<char>> data { };
+            String()
+                : Any(TypeID::String)
+            {
+            }
+            String(std::string_view s, Allocator &&a = Allocator())
+                : Any(TypeID::String)
+                , data(s, a)
+            {
+            }
+        };
+
+        class List final : public Any
+        {
+        public:
+            List(TypeID elements_type_id,
+                AlRebind<AnyUP> &&allocator = AlRebind<AnyUP>())
+                : Any(TypeID::List)
+                , m_elements_type_id(elements_type_id)
+                , m_data(allocator)
+            {
+            }
+
+            void push_back(AnyUP &&any)
+            {
+                if (!any)
+                    throw std::logic_error(
+                        "nbt::Traits::List::push_back: empty unique pointer to element passed");
+
+                if (any->get_type_id() != m_elements_type_id)
+                    throw std::logic_error(
+                        "nbt::Traits::List::push_back: element type ID doesn't match with list type ID");
+
+                m_data.push_back(std::move(any));
+            }
+
+            [[nodiscard]] auto begin() const { return m_data.cbegin(); }
+            [[nodiscard]] auto end() const { return m_data.cend(); }
+
+            [[nodiscard]] size_t size() const { return m_data.size(); }
+            [[nodiscard]] bool empty() const { return m_data.empty(); }
+
+            [[nodiscard]] TypeID get_elements_type_id(
+                bool do_return_end_if_empty) const
+            {
+                return empty() && do_return_end_if_empty ? TypeID::End
+                                                         : m_elements_type_id;
+            }
+
+        private:
+            TypeID m_elements_type_id { };
+            std::vector<AnyUP, AlRebind<AnyUP>> m_data { };
+        };
+
+        class Compound final : public Any
+        {
+        public:
+            using Name = actualtemplatelib::SmallString<8, AlRebind<char>>;
+
+        public:
+            small_flat_map<Name, AnyUP, 1, std::less<Name>,
+                AlRebind<std::pair<Name, AnyUP>>>
+                data { };
+            Compound()
+                : Any(TypeID::Compound)
+            {
+            }
+        };
+    };
+
+    export using Default = Traits<std::allocator<void>>;
+    export using ArenaDefault = Traits<actualtemplatelib::ArenaAllocator<void>>;
+
+    template <typename TraitsType, typename OutputIt>
+    OutputIt recursive_ser(OutputIt it, const typename TraitsType::Any &tag)
+    {
+        if (tag.get_type_id() == TypeID::End)
+        {
+            throw std::logic_error(
+                "nbt::recursive_ser: TypeID::End mustn't appear in nbt::Traits data model");
+        }
+        if (tag.get_type_id() == TypeID::I8)
+        {
+            *it++ = static_cast<const Default::I8 &>(tag).data;
+        }
+        if (tag.get_type_id() == TypeID::I16)
+        {
+            return protocoltypes::write_integer(
+                it, static_cast<const Default::I16 &>(tag).data);
+        }
+        if (tag.get_type_id() == TypeID::I32)
+        {
+            return protocoltypes::write_integer(
+                it, static_cast<const Default::I32 &>(tag).data);
+        }
+        if (tag.get_type_id() == TypeID::I64)
+        {
+            return protocoltypes::write_integer(
+                it, static_cast<const Default::I64 &>(tag).data);
+        }
+        if (tag.get_type_id() == TypeID::Float)
+        {
+            return protocoltypes::write_real(
+                it, static_cast<const Default::Float &>(tag).data);
+        }
+        if (tag.get_type_id() == TypeID::Double)
+        {
+            return protocoltypes::write_real(
+                it, static_cast<const Default::Double &>(tag).data);
+        }
+        if (tag.get_type_id() == TypeID::I8Array)
+        {
+            const auto &data = static_cast<const Default::I8Array &>(tag).data;
+            it = protocoltypes::write_integer<int32_t>(it, data.size());
+            return std::copy(data.begin(), data.end(), it);
+        }
+        if (tag.get_type_id() == TypeID::String)
+        {
+            std::string_view view
+                = static_cast<const Default::String &>(tag).data;
+            assert(view.size() < 32700);
+            it = protocoltypes::write_integer<uint16_t>(it, view.size());
+            return std::copy(view.begin(), view.end(), it);
+        }
+        if (tag.get_type_id() == TypeID::List)
+        {
+            const auto &data = static_cast<const Default::List &>(tag);
+
+            *it++ = uint8_t(data.get_elements_type_id(true));
+            it = protocoltypes::write_integer<int32_t>(it, data.size());
+            for (const auto &subtag : data)
+            {
+                it = recursive_ser(it, *subtag);
+            }
+            return it;
+        }
+        if (tag.get_type_id() == TypeID::Compound)
+        {
+            for (const auto &kv :
+                static_cast<const Default::Compound &>(tag).data)
+            {
+                *it++ = uint8_t(kv.second->get_type_id());
+                it = protocoltypes::write_integer<uint16_t>(
+                    it, kv.first.size());
+                it = std::copy(kv.first.begin(), kv.first.end(), it);
+                it = recursive_ser(it, *kv.second);
+            }
+            *it++ = uint8_t(TypeID::End);
+            return it;
+        }
+        if (tag.get_type_id() == TypeID::I32Array)
+        {
+            const auto &data = static_cast<const Default::I32Array &>(tag).data;
+            it = protocoltypes::write_integer<int32_t>(it, data.size());
+            for (int32_t i : data)
+                it = protocoltypes::write_integer(it, i);
+            return it;
+        }
+        if (tag.get_type_id() == TypeID::I64Array)
+        {
+            const auto &data = static_cast<const Default::I64Array &>(tag).data;
+            it = protocoltypes::write_integer<int32_t>(it, data.size());
+            for (int64_t i : data)
+                it = protocoltypes::write_integer(it, i);
+            return it;
+        }
+        throw std::logic_error(
+            std::format("nbt::recursive_ser: unknown tag type ID {} / 0x{:X}",
+                int(tag.get_type_id()), int(tag.get_type_id())));
+    }
+
+    export struct NetworkNBT
+    {
+    };
+
+    export template <typename TraitsType, typename OutputIt>
+    OutputIt serialize(OutputIt it, const typename TraitsType::Compound &root,
+        std::variant<std::string_view, NetworkNBT> name)
+    {
+        *it++ = uint8_t(TypeID::Compound);
+        if (auto *view = std::get_if<std::string_view>(&name))
+        {
+            assert(view->size() < 32700);
+            it = protocoltypes::write_integer<uint16_t>(it, view->size());
+            it = std::copy(view->begin(), view->end(), it);
+        }
+        return recursive_ser<TraitsType, OutputIt>(it, root);
+    }
+}
