@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import socket
 
 def rpkt() -> bytes:
@@ -26,7 +28,7 @@ def wpkt(pkt: bytes) -> None:
         value >>= 7
     sock.send(pkt)
 
-def vari32asb(value: int) -> bytes:
+def v32asb(value: int) -> bytes:
     if value < 0:
         raise NotImplementedError
     ret=b''
@@ -41,7 +43,7 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect(('127.0.0.1', 25565))
 
 # handshake
-wpkt(b'\x00' + vari32asb(775) + b'\x04addr\x00\x00\x02')
+wpkt(b'\x00' + v32asb(775) + b'\x04addr\x00\x00\x02')
 
 # login start
 wpkt(b'\x00\x08KlasterK')
