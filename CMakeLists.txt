@@ -24,6 +24,7 @@ target_sources(actualklasterkraft PUBLIC
         src/statecoroutines/status.cppm
         src/acceptor.cppm
         src/bitfields.cppm
+        src/disconnecthelpers.cppm
         src/errc.cppm
         src/formatters.cppm
         src/nbtbuilder.cppm

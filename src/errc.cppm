@@ -8,6 +8,7 @@ export enum class MCProtocolError {
     UnexpectedPacketID,
     ExcessPacketData,
     UnsufficientPacketData,
+    CorrelationIDMismatch,
 };
 
 export class MCProtocolErrorCategory : public boost::system::error_category
@@ -24,7 +25,7 @@ public:
 
     const char *name() const noexcept override
     {
-        return "MCJEProtocolErrorCategory";
+        return "MCProtocolErrorCategory";
     }
 
     std::string message(int value) const override
@@ -33,8 +34,16 @@ public:
         {
         case MCProtocolError::VarIntTooBig:
             return "VarInt is too big";
+        case MCProtocolError::UnexpectedPacketID:
+            return "Unexpected packet ID";
+        case MCProtocolError::ExcessPacketData:
+            return "Excess packet data";
+        case MCProtocolError::UnsufficientPacketData:
+            return "Unsufficient packet data";
+        case MCProtocolError::CorrelationIDMismatch:
+            return "Correlation ID mismatch";
         default:
-            return "Unknown";
+            return std::format("Unknown 0x{:x}", value, value);
         }
     }
 };

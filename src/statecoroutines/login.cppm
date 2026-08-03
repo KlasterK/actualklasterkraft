@@ -2,8 +2,7 @@ module;
 #include <boost/asio.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
-#include <boost/system/detail/error_code.hpp>
-#include <boost/uuid.hpp>
+#include <boost/system.hpp>
 #include <coroutine>
 #include <cstdint>
 #include <openssl/md5.h>
@@ -11,6 +10,7 @@ module;
 #include <string_view>
 export module actualklasterkraft.statecoroutines.login;
 
+import actualklasterkraft.disconnecthelpers;
 import actualklasterkraft.errc;
 import actualklasterkraft.formatters;
 import actualklasterkraft.packetops;
@@ -33,26 +33,6 @@ namespace sys = boost::system;
     return uuid;
 }
 
-asio::awaitable<void> login_disconnect(
-    Session &session, std::string_view json_reason)
-{
-    session.get_streambuf().consume(session.get_streambuf().size());
-
-    session.get_streambuf().sputc(0x00); // id Login Disconnect
-    streambufops::write_string(session.get_streambuf(), json_reason);
-
-    auto ec = co_await packetops::flush_packet(session);
-    if (ec)
-        std::println(
-            "\tCan't send disconnect message to the client (error code: {}; reason: {})",
-            ec, json_reason);
-    else
-        std::println("\tClient was disconnected with reason: {}", json_reason);
-
-    session.get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
-    session.get_socket().close();
-}
-
 export namespace statecoroutines
 {
     asio::awaitable<void> login(
@@ -64,27 +44,24 @@ export namespace statecoroutines
 
         ec = co_await packetops::await_for_packet(*session);
         if (ec)
-            co_return co_await login_disconnect(*session,
-                std::format(
-                    "{{\"text\": \"Protocol Desync: could't get packet Login Start due to error: {}\"}}",
-                    ec));
+            co_return co_await disconnect::login(
+                *session, disconnect::fmt_desync(ec, "Login Start"));
 
         if (session->get_streambuf().sbumpc() != 0x00) // Login Start
-            co_return co_await login_disconnect(*session,
-                "{\"text\": \"Protocol Desync: unexpected packet ID (should be Login Start)\"}");
+            co_return co_await disconnect::login(*session,
+                disconnect::fmt_desync(
+                    MCProtocolError::UnexpectedPacketID, "Login Start"));
 
         int32_t name_len = streambufops::read_v32(session->get_streambuf(), ec);
         if (ec)
-            co_return co_await login_disconnect(*session,
-                std::format(
-                    "{{\"text\": \"Protocol Desync: error while parsing packet: {}\"}}",
-                    ec));
+            co_return co_await disconnect::login(
+                *session, disconnect::fmt_desync(ec, "Login Start"));
         if (name_len < 1)
-            co_return co_await login_disconnect(*session,
-                "{\"text\":\"Your name can't be empty or negative size.\"}");
+            co_return co_await disconnect::login(
+                *session, "Your name can't be empty or negative size");
         if (name_len > 16)
-            co_return co_await login_disconnect(*session,
-                "{\"text\":\"Your name is longer than 16 characters.\"}");
+            co_return co_await disconnect::login(
+                *session, "Your name is longer than 16 characters");
 
         // Needed to generate offline player UUID
         constexpr std::string_view UUIDDomainPrefix = "OfflinePlayer:";
@@ -104,8 +81,9 @@ export namespace statecoroutines
         session->get_streambuf().consume(16);
 
         if (session->get_streambuf().size() > 0)
-            co_return co_await login_disconnect(*session,
-                "{\"text\": \"Protocol Desync: excess packet data\"}");
+            co_return co_await disconnect::login(*session,
+                disconnect::fmt_desync(
+                    MCProtocolError::ExcessPacketData, "Login Start"));
 
         // Generate UUID for the player
         auto player_uuid = generate_java_uuid3(
@@ -125,26 +103,24 @@ export namespace statecoroutines
 
         ec = co_await packetops::flush_packet(*session);
         if (ec)
-            co_return co_await login_disconnect(*session,
-                std::format(
-                    "{{\"text\": \"Protocol Desync: could't send packet due to error: {}\"}}",
-                    ec));
+            co_return co_await disconnect::login(
+                *session, disconnect::fmt_desync(ec, "Login Success"));
 
         // Ignore any packets until Login Acknowledged
         for (;;)
         {
             ec = co_await packetops::await_for_packet(*session);
             if (ec)
-                co_return co_await login_disconnect(*session,
-                    std::format(
-                        "{{\"text\": \"Protocol Desync: could't receive packet due to error: {}\"}}",
-                        ec));
+                co_return co_await disconnect::login(
+                    *session, disconnect::fmt_desync(ec, "Login Acknowledged"));
 
             if (session->get_streambuf().sbumpc() == 0x03) // Login Acknowledged
             {
                 if (session->get_streambuf().size() > 0) // No fields
-                    co_return co_await login_disconnect(*session,
-                        "{\"text\": \"Protocol Desync: excess packet data\"}");
+                    co_return co_await disconnect::login(*session,
+                        disconnect::fmt_desync(
+                            MCProtocolError::ExcessPacketData,
+                            "Login Acknowledged"));
                 break;
             }
 

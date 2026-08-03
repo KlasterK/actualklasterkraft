@@ -11,6 +11,7 @@ module;
 export module actualklasterkraft.statecoroutines.play;
 
 import actualklasterkraft.bitfields;
+import actualklasterkraft.disconnecthelpers;
 import actualklasterkraft.errc;
 import actualklasterkraft.packetops;
 import actualklasterkraft.packetrouter;
@@ -89,10 +90,12 @@ asio::awaitable<void> KeepAlive::keepalive_loop()
 
         co_await m_send_timer.async_wait(asio::redirect_error(ec));
         if (ec)
-            co_return co_await graceful_disconnect(*m_session);
+            co_return co_await disconnect::play(
+                *m_session, disconnect::fmt_desync(ec, "Keep Alive timer"));
 
         if (m_timeout_counter++ > 2)
-            co_return co_await graceful_disconnect(*m_session);
+            co_return co_await disconnect::play(
+                *m_session, "Timeout (powered by ActualKlasterKraft)");
 
         m_session->get_streambuf().sputc(ClientboundPacketID);
         uint64_t payload = g_u64_dist(g_rng);
@@ -101,7 +104,8 @@ asio::awaitable<void> KeepAlive::keepalive_loop()
 
         ec = co_await packetops::flush_packet(*m_session);
         if (ec)
-            co_return co_await graceful_disconnect(*m_session);
+            co_return co_await disconnect::play(*m_session,
+                disconnect::fmt_desync(ec, "Clienbound Keep Alive"));
 
         for (uint64_t &active_payload : m_active_payloads)
         {
@@ -119,15 +123,20 @@ asio::awaitable<void> KeepAlive::keepalive_loop()
         co_await m_serverbound_keepalive_channel.async_receive(
             asio::redirect_error(ec));
         if (ec)
-            co_return co_await graceful_disconnect(*m_session);
+            co_return co_await disconnect::play(*m_session,
+                disconnect::fmt_desync(ec, "Serverbound Keep Alive"));
 
         auto got_payload = streambufops::read_integer<uint64_t>(
             m_session->get_streambuf(), ec);
         if (got_payload != payload)
-            co_return co_await graceful_disconnect(*m_session);
+            co_return co_await disconnect::play(*m_session,
+                disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
+                    "Serverbound Keep Alive"));
 
         if (m_session->get_streambuf().size() > 0)
-            co_return co_await graceful_disconnect(*m_session);
+            co_return co_await disconnect::play(*m_session,
+                disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
+                    "Serverbound Keep Alive"));
 
         for (auto &active_payload : m_active_payloads)
         {
@@ -228,7 +237,8 @@ asio::awaitable<void> statecoroutines::play(
     put_login_packet(session->get_streambuf());
     ec = co_await packetops::flush_packet(*session);
     if (ec)
-        co_return co_await graceful_disconnect(*session);
+        co_return co_await disconnect::play(
+            *session, disconnect::fmt_desync(ec, "Login the packet"));
 
     // Synchronise Player Position
     int32_t teleport_id = g_i32_dist(g_rng);
@@ -246,7 +256,8 @@ asio::awaitable<void> statecoroutines::play(
 
     ec = co_await packetops::flush_packet(*session);
     if (ec)
-        co_return co_await graceful_disconnect(*session);
+        co_return co_await disconnect::play(*session,
+            disconnect::fmt_desync(ec, "Synchronise Player Position"));
 
     // Await for Confirm Teleportation
     {
@@ -255,18 +266,24 @@ asio::awaitable<void> statecoroutines::play(
 
         co_await channel.async_receive(asio::redirect_error(ec));
         if (ec)
-            co_return co_await graceful_disconnect(*session);
+            co_return co_await disconnect::play(
+                *session, disconnect::fmt_desync(ec, "Confirm Teleportation"));
 
         int32_t got_teleport_id
             = streambufops::read_v32(session->get_streambuf(), ec);
         if (ec)
-            co_return co_await graceful_disconnect(*session);
+            co_return co_await disconnect::play(
+                *session, disconnect::fmt_desync(ec, "Confirm Teleportation"));
 
         if (got_teleport_id != teleport_id)
-            co_return co_await graceful_disconnect(*session);
+            co_return co_await disconnect::play(*session,
+                disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
+                    "Confirm Teleportation"));
 
         if (session->get_streambuf().size() > 0)
-            co_return co_await graceful_disconnect(*session);
+            co_return co_await disconnect::play(*session,
+                disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
+                    "Confirm Teleportation"));
     }
 
     // send Game Event 'Start waiting for level chunks'
@@ -276,7 +293,8 @@ asio::awaitable<void> statecoroutines::play(
 
     ec = co_await packetops::flush_packet(*session);
     if (ec)
-        co_return co_await graceful_disconnect(*session);
+        co_return co_await disconnect::play(
+            *session, disconnect::fmt_desync(ec, "Game Event"));
 
     // send Set Center Chunk
     session->get_streambuf().sputc(0x5E); // packet id
@@ -285,12 +303,17 @@ asio::awaitable<void> statecoroutines::play(
 
     ec = co_await packetops::flush_packet(*session);
     if (ec)
-        co_return co_await graceful_disconnect(*session);
+        co_return co_await disconnect::play(
+            *session, disconnect::fmt_desync(ec, "Set Center Chunk"));
 
     co_await asio::steady_timer(session->get_io(), std::chrono::seconds(120))
         .async_wait(asio::redirect_error(ec));
     if (ec)
-        co_return co_await graceful_disconnect(*session);
+        co_return co_await disconnect::play(
+            *session, disconnect::fmt_desync(ec, "timer"));
 
-    co_await graceful_disconnect(*session);
+    co_await disconnect::play(*session,
+        "Gameplay not implemented yet."
+        " But we could hold you in an empty world for 2 minutes."
+        "\nPowered by ActualKlasterKraft");
 }

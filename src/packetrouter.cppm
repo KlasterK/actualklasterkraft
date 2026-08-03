@@ -99,7 +99,7 @@ public:
                 if (m_subscribers[id] == nullptr)
                 {
                     std::println(
-                        "\tPacketRouter::begin_receiving: received packet with ID {} without any subscribers",
+                        "\tPacketRouter::begin_receiving: received packet with ID 0x{:x} without any subscribers",
                         id);
 
                     m_session.get_streambuf().consume(
@@ -109,7 +109,7 @@ public:
                 {
                     if (!m_subscribers[id]->try_send(sys::error_code { }))
                         throw std::runtime_error(std::format(
-                            "PacketRouter::begin_receiving: sending to subscriber channel failed (packet ID {})",
+                            "PacketRouter::begin_receiving: sending to subscriber channel failed (packet ID 0x{:x})",
                             id));
                 }
 

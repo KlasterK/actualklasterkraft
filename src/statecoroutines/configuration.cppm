@@ -8,6 +8,7 @@ module;
 #include <print>
 export module actualklasterkraft.statecoroutines.configuration;
 
+import actualklasterkraft.disconnecthelpers;
 import actualklasterkraft.errc;
 import actualklasterkraft.nbtbuilder;
 import actualklasterkraft.packetops;
@@ -19,26 +20,6 @@ import actualklasterkraft.statecoroutines.play;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
-
-asio::awaitable<void> graceful_disconnect(Session &session, std::string_view sv)
-{
-    session.get_streambuf().consume(session.get_streambuf().size());
-
-    session.get_streambuf().sputc(0x02); // id Disconnect (configuration)
-    NBTBuilder(std::ostreambuf_iterator(&session.get_streambuf()))
-        << nbtbuilderdefinitions::String << sv;
-
-    sys::error_code ec = co_await packetops::flush_packet(session);
-    if (ec)
-        std::println(
-            "\tCan't send disconnect message to the client (error code: {}; reason: {})",
-            ec, sv);
-    else
-        std::println("\tClient was disconnected with reason: {}", sv);
-
-    session.get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
-    session.get_socket().close();
-}
 
 export namespace statecoroutines
 {
@@ -60,10 +41,9 @@ export namespace statecoroutines
             ec = co_await packetops::flush_packet(
                 *session, asio::buffer(packet_it, packet_length));
             if (ec)
-                co_return co_await graceful_disconnect(*session,
-                    std::format(
-                        "Protocol Desync: couldn't send packet due to error: {}",
-                        ec));
+                co_return co_await disconnect::configuration(*session,
+                    disconnect::fmt_desync(
+                        ec, "prebuilt Configuration state packets"));
             packet_it += packet_length;
         }
 
@@ -71,28 +51,27 @@ export namespace statecoroutines
         session->get_streambuf().sputc(0x03);
         ec = co_await packetops::flush_packet(*session);
         if (ec)
-            co_return co_await graceful_disconnect(*session,
-                std::format(
-                    "Protocol Desync: couldn't send packet due to error: {}",
-                    ec));
+            co_return co_await disconnect::configuration(
+                *session, disconnect::fmt_desync(ec, "Finish Configuration"));
 
         // Ignore any packets until Acknowledge Finish Configuration
         for (;;)
         {
             ec = co_await packetops::await_for_packet(*session);
             if (ec)
-                co_return co_await graceful_disconnect(*session,
-                    std::format(
-                        "Protocol Desync: could't get packet Login Start due to error: {}",
-                        ec));
+                co_return co_await disconnect::configuration(*session,
+                    disconnect::fmt_desync(
+                        ec, "Acknowledge Finish Configuration"));
 
             // Acknowledge Finish Configuration
             if (session->get_streambuf().sbumpc() == 0x03)
             {
                 // No fields
                 if (session->get_streambuf().size() > 0)
-                    co_return co_await graceful_disconnect(
-                        *session, "Protocol Desync: excess packet data");
+                    co_return co_await disconnect::configuration(*session,
+                        disconnect::fmt_desync(
+                            MCProtocolError::ExcessPacketData,
+                            "Acknowledge Finish Configuration"));
                 break;
             }
             session->get_streambuf().consume(session->get_streambuf().size());
