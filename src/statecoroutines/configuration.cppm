@@ -15,6 +15,7 @@ import actualklasterkraft.prebuiltconfiguration;
 import actualklasterkraft.session;
 import actualklasterkraft.formatters;
 import actualklasterkraft.streambufops;
+import actualklasterkraft.statecoroutines.play;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -97,6 +98,10 @@ export namespace statecoroutines
             session->get_streambuf().consume(session->get_streambuf().size());
         }
 
-        // We're in Play state now
+        asio::co_spawn(session->get_io(),
+            statecoroutines::play(
+                session, std::move(player_name), std::move(player_uuid)),
+            [session](std::exception_ptr exc_ptr)
+            { session->handle_coroutine_finished(exc_ptr); });
     }
 }

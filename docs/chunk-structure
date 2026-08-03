@@ -1,0 +1,128 @@
+Chunk Data and Update Light
+===========================
+
+Chunk X             : i32
+Chunk Y             : i32
+Heightmaps          : prefixed array
+                          // Heightmaps are not required to fulfill, it might be empty and everything will be ok.
+    Type            : v32 // Heightmap Enum
+    Data            : prefixed array of u64
+Data size in bytes  : v32 // in some cases this is larger than it needs to be in which case extra bytes should be skipped before reading fields after Data.
+Data                : array
+                          // This array is NOT length-prefixed. The number of elements in the array is calculated based on the world's height. 
+                          // Sections are sent bottom-to-top. Starting with 1.18, the world height changes based on the dimension. 
+                          // The height of each dimension is assigned by the server in its corresponding entry in the minecraft:dimension_type synchronised registry. 
+                          // For example, the vanilla overworld is 384 blocks tall, meaning 24 chunk sections will be included in this array.
+    Block count     : i16 // Number of non-air blocks present in the chunk section. "Non-air" is defined as any fluid and block other than air, cave air, and void air. 
+                          // The client will keep count of the blocks as they are broken and placed, and, if the block count reaches 0, 
+                          // the whole chunk section is not rendered, even if it still has blocks.
+    Fluid count     : i16 // Number of fluids (waterlogged blocks, and minecraft:water or minecraft:lava with any block state) in this chunk section.
+    Block states    : paletted container
+                          // Consists of 4096 entries, representing all the blocks in the chunk section.
+    Biomes          : paletted container
+                          // Consists of 64 entries, representing 4×4×4 biome regions in the chunk section.
+Block Entities      : prefixed array
+    Packed XZ       : u8  // The packed section coordinates are relative to the chunk they are in. Values 0-15 are valid.
+                          // packed_xz = ((blockX & 15) << 4) | (blockZ & 15) // encode
+                          // x = packed_xz >> 4, z = packed_xz & 15 // decode
+    Y               : i16
+    Type            : v32
+    Data            : nbt
+Light               : light data
+    Sky Light Mask  : prefixed bitset
+                          // BitSet containing bits for each section in the world + 2. Each set bit indicates that
+                          // the corresponding 16×16×16 chunk section has data in the Sky Light array below. 
+                          // The LSB is for blocks 16 blocks to 1 block below the min world height (one section below the world),
+                          // while the MSB covers blocks 1 to 16 blocks above the max world height (one section above the world).
+    Block LM        : prefixed bitset
+                          // BitSet containing bits for each section in the world + 2. Each set bit indicates that
+                          // the corresponding 16×16×16 chunk section has data in the Block Light array below.
+                          // The order of bits is the same as in Sky Light Mask.
+    Empty Sky LM    : prefixed bitset   
+                          // BitSet containing bits for each section in the world + 2. Each set bit indicates that 
+                          // the corresponding 16×16×16 chunk section has all zeros for its Sky Light data.
+                          // The order of bits is the same as in Sky Light Mask.
+    Empty Block LM  : prefixed bitset
+                          // BitSet containing bits for each section in the world + 2. Each set bit indicates that
+                          // the corresponding 16×16×16 chunk section has all zeros for its Block Light data.
+                          // The order of bits is the same as in Sky Light Mask.
+    Sky Lights Arrs : prefixed array <prefixed array <u8> len always 2048>
+                          // There is 1 array for each bit set to true in the sky light mask, starting with the lowest value. Half a byte per light value.
+    Block L. Arrays : prefixed array <prefixed array <u8> len always 2048>
+                          // There is 1 array for each bit set to true in the block light mask, starting with the lowest value. Half a byte per light value.
+
+
+
+Paletted Container
+==================
+
+A Paletted Container is a palette-based storage of entries. Paletted Containers have an associated global palette (either block states or biomes as of now),
+where values are mapped from. A Paletted Container consists of the following fields:
+
+bits per entry  : u8
+palette         : variant <single valued = v32, indirect = prefixed array of v32, direct = void>
+data array      : array of u64 (if not single valued)
+
+Bits Per Entry  (blocks)    (biomes)    Palette Format
+                0           0           Single Valued
+                4--8        1--3        Indirect
+                15 (b)      7 (a)       Direct
+
+(a) The Notchian client calculates the Bits Per Entry values for the Direct palette format at runtime
+based on the sizes of the global block state and biome palettes. As such, the value used for biomes
+is entirely dependent on the contents of the biome registry sent in the Registry Data packet;
+the value shown is only valid for vanilla servers with no custom data packs. If the BPE requirement for Direct
+is less than or equal to the maximum for Indirect, Direct will never be used given BPE values within the valid range.
+
+(b) Similarly, if a sufficiently large number of blocks is added with mods, the value will be increased to compensate for the increased ID count.
+This increase can go up to 31 bits per entry (since registry IDs are signed integers). In case of Minecraft Forge, 
+you can get the number of blocks with the "Number of ids" field found in the RegistryData packet in the Forge Handshake.
+
+Example chunk section:
+
+i16 block_count = 0x0000;
+i16 fluid_count = 0x0000;
+paletted_container block_states
+{
+    u8  bits_per_entry = 0x00;
+    v32 single_value   = 0x00; // might be e.g. Air
+}
+paletted_container biomes
+{
+    u8  bits_per_entry    = 0x01;
+    v32 local_palette_len = 0x02;
+    v32 local_palette[2]  = {0x27, 0x03};
+    u64 data              = 0xCCFFCCFFCCFFCCFF;
+}
+
+Example 5 bits per block layout in u64:
+
+Entities    A(1) B(2) C(2) D(3) E(4) F(4) G(5) H(6) I(6) J(4) K(8) L(0) M(7) N(4) O(3) P(13) Q(15) R(16) S(9) T(14) U(10) V(12) W(0) X(2)
+Hex  №1     0x0020863148418841
+Hex  №2     0x01018A7260F68C87
+Bits №1     unused 0000 l 00000 k 01000 j 00100 i 00110 h 00110 g 00101 f 00100 e 00100 d 00011 c 00010 b 00010 a 00001
+Bits №2     unused 0000 x 00010 w 00000 v 01100 u 01010 t 01110 s 01001 r 10000 q 01111 p 01101 o 00011 n 00100 m 00111
+
+
+
+Description
+===========
+
+The height values of a heightmap are packed into the u64 array in the same manner described in #Data Array format,
+and ordered such that the fastest-increasing coordinate is x. (However, there are only 256 entries—one for each block column.)
+The Bits Per Entry value used is calculated as ceil(log2(world_height + 1)). 
+This is because the number of possible height values is one more than the world height—ranging from 0 (completely blank column; not even bedrock) 
+to world height (highest position is occupied). Note that this means, for example, that a world with height 256 will use a Bits Per Entry of 9. 
+Since the minimum world height might be negative, it must be added as an offset to get the actual highest occupied Y coordinate.
+
+
+
+Heightmap Enum
+==============
+
+Name	                    ID	Considers Occupied	                                            Purposes
+WORLD_SURFACE	            1	All blocks other than air, cave air and void air.	            To determine if a beacon beam is obstructed.
+MOTION_BLOCKING	            4	"Solid" blocks, except bamboo saplings and cactuses; fluids.	To determine where to display rain and snow.
+MOTION_BLOCKING_NO_LEAVES	5	Same as MOTION_BLOCKING, excluding leaf blocks.	
+
+

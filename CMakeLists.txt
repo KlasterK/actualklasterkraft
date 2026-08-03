@@ -20,12 +20,15 @@ target_sources(actualklasterkraft PUBLIC
         src/statecoroutines/configuration.cppm
         src/statecoroutines/handshake.cppm
         src/statecoroutines/login.cppm
+        src/statecoroutines/play.cppm
         src/statecoroutines/status.cppm
         src/acceptor.cppm
+        src/bitfields.cppm
         src/errc.cppm
         src/formatters.cppm
         src/nbtbuilder.cppm
         src/packetops.cppm
+        src/packetrouter.cppm
         src/prebuiltconfiguration.cppm
         src/session.cppm
         src/streambufops.cppm
