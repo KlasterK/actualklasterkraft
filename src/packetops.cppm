@@ -1,7 +1,6 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/system.hpp>
-#include <expected>
 export module actualklasterkraft.packetops;
 
 import actualklasterkraft.errc;
@@ -12,8 +11,7 @@ namespace sys = boost::system;
 
 export namespace packetops
 {
-    asio::awaitable<std::expected<size_t, sys::error_code>> await_for_packet(
-        Session &session)
+    asio::awaitable<sys::error_code> await_for_packet(Session &session)
     {
         char byte { };
         int32_t packet_size { };
@@ -26,32 +24,31 @@ export namespace packetops
                 asio::buffer(&byte, 1), asio::transfer_exactly(1),
                 asio::redirect_error(ec));
             if (ec)
-                co_return std::unexpected(ec);
+                co_return ec;
 
-            packet_size |= (byte & 0b01111111) << position;
+            packet_size |= uint32_t(byte & 0b01111111) << position;
             if ((byte & 0b10000000) == 0)
                 break;
 
             position += 7;
             if (position > 32)
-                co_return std::unexpected(MCProtocolError::VarIntTooBig);
+                co_return MCProtocolError::VarIntTooBig;
         }
 
         co_await asio::async_read(session.get_socket(), session.get_streambuf(),
             asio::transfer_exactly(packet_size), asio::redirect_error(ec));
 
-        if (ec)
-            co_return std::unexpected(ec);
-
-        co_return packet_size;
+        co_return ec;
     }
 
-    asio::awaitable<sys::error_code> flush_packet(Session &session)
+    asio::awaitable<sys::error_code> flush_packet(Session &session,
+        std::optional<asio::const_buffer> override_buf = std::nullopt)
     {
+        sys::error_code ec { };
         std::array<uint8_t, 5> size_buf;
-        auto *size_end = size_buf.begin();
+        uint8_t *size_end = size_buf.begin();
 
-        for (uint32_t value = session.get_streambuf().size();;)
+        for (uint32_t value = override_buf ? override_buf->size() : session.get_streambuf().size();;)
         {
             if ((value & ~0x7F) == 0)
             {
@@ -62,14 +59,16 @@ export namespace packetops
             value >>= 7u;
         }
 
-        auto bufs = std::to_array<asio::const_buffer>(
-            { { size_buf.begin(),
-                  static_cast<size_t>(size_end - size_buf.begin()) },
-                session.get_streambuf().data() });
+        std::array<asio::const_buffer, 2> bufs {
+            asio::buffer(size_buf.begin(), size_end - size_buf.begin()),
+            override_buf ? *override_buf : session.get_streambuf().data()
+        };
 
-        auto [ec, _] = co_await asio::async_write(
-            session.get_socket(), bufs, asio::as_tuple);
-        session.get_streambuf().consume(session.get_streambuf().size());
+        co_await asio::async_write(
+            session.get_socket(), bufs, asio::redirect_error(ec));
+
+        if (!override_buf.has_value())
+            session.get_streambuf().consume(session.get_streambuf().size());
 
         co_return ec;
     }
