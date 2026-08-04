@@ -19,6 +19,7 @@ import actualklasterkraft.session;
 import actualklasterkraft.streambufops;
 import actualklasterkraft.formatters;
 import actualklasterkraft.nbtbuilder;
+import actualklasterkraft.world.autogentest;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -181,7 +182,7 @@ void put_login_packet(asio::streambuf &sbuf)
     // First 8 bytes of seed's SHA-256
     streambufops::write_integer<uint64_t>(sbuf, 123456789);
     // Gamemode
-    sbuf.sputc(0); // Survival
+    sbuf.sputc(1); // Creative
     // Previous gamemode
     sbuf.sputc(0xFF); // Undefined
     // Is debug mode world (used to test resourcepacks, not our case)
@@ -253,7 +254,8 @@ asio::awaitable<void> statecoroutines::play(
     session->get_streambuf().sputc(0x48); // packet id
     streambufops::write_v32(session->get_streambuf(), teleport_id);
     // position, velocity
-    for (double value : { 0.0, 80.0, 0.0, 0.0, 0.0, 0.0 })
+    // TODO: client somewhy ignores sent values and places the player at (0; 0; 0)
+    for (double value : { 8.0, 82.0, 8.0, 0.0, 0.0, 0.0 })
         streambufops::write_real(session->get_streambuf(), value);
     // yaw, pitch
     for (float value : { 0.f, 0.f }) // looking towards positive Z
@@ -313,14 +315,40 @@ asio::awaitable<void> statecoroutines::play(
         co_return co_await disconnect::play(
             *session, disconnect::fmt_desync(ec, "Set Center Chunk"));
 
-    co_await asio::steady_timer(session->get_io(), std::chrono::seconds(120))
-        .async_wait(asio::redirect_error(ec));
-    if (ec)
-        co_return co_await disconnect::play(
-            *session, disconnect::fmt_desync(ec, "timer"));
+    chunkgen::put_single_valued_sectioned_chunk(session->get_streambuf(), 0, 0,
+        std::array { chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+            chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+            chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+            chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air });
 
-    co_await disconnect::play(*session,
-        "Gameplay not implemented yet."
-        " But we could hold you in an empty world for 2 minutes."
-        "\nPowered by ActualKlasterKraft");
+    ec = co_await packetops::flush_packet(*session);
+    if (ec)
+        co_return co_await disconnect::play(*session,
+            disconnect::fmt_desync(ec, "Update Chunk and Light Data"));
+
+    for (auto xz :
+        std::to_array<std::array<int32_t, 2>>({ { 0, 1 }, { 1, 1 }, { 1, 0 },
+            { 1, -1 }, { 0, -1 }, { -1, -1 }, { -1, 0 }, { -1, 1 } }))
+    {
+        chunkgen::put_empty_chunk(session->get_streambuf(), xz[0], xz[1]);
+
+        ec = co_await packetops::flush_packet(*session);
+        if (ec)
+            co_return co_await disconnect::play(*session,
+                disconnect::fmt_desync(ec, "Update Chunk and Light Data"));
+    }
+
+    // Do nothing until the socket closes
+    asio::steady_timer timer(session->get_io(), std::chrono::seconds(1));
+    for (;;)
+    {
+        co_await timer.async_wait(asio::redirect_error(ec));
+        if (ec)
+            co_return co_await disconnect::play(
+                *session, disconnect::fmt_desync(ec, "timer"));
+    }
 }
