@@ -5,6 +5,7 @@ module;
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <boost/system.hpp>
 #include <exception>
+#include <functional>
 #include <print>
 #include <stdexcept>
 export module actualklasterkraft.packetrouter;
@@ -69,8 +70,10 @@ public:
     };
 
 public:
-    PacketRouter(Session &session) noexcept
+    PacketRouter(Session &session,
+        std::move_only_function<void(sys::error_code)> on_error)
         : m_session(session)
+        , m_on_error(std::move(on_error))
     {
     }
 
@@ -83,14 +86,13 @@ public:
                 if (exc_ptr)
                     std::rethrow_exception(exc_ptr);
 
-                // TODO: don't throw, handle using simple passing
                 if (ec)
-                    throw sys::system_error(ec);
+                    return m_on_error(ec);
 
                 int32_t id
                     = streambufops::read_v32(m_session.get_streambuf(), ec);
                 if (ec)
-                    throw sys::system_error(ec);
+                    return m_on_error(ec);
 
                 if (id < 0 || id >= MaxPacketID)
                     throw std::logic_error(
@@ -134,5 +136,6 @@ public:
 
 private:
     Session &m_session;
+    std::move_only_function<void(sys::error_code)> m_on_error;
     std::array<PacketChannel *, MaxPacketID> m_subscribers { };
 };

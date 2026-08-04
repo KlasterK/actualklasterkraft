@@ -226,7 +226,14 @@ asio::awaitable<void> statecoroutines::play(
     std::println("\tstate_play");
     sys::error_code ec { };
 
-    PacketRouter packet_router { *session };
+    PacketRouter packet_router(*session,
+        [session](sys::error_code ec)
+        {
+            asio::co_spawn(session->get_io(),
+                disconnect::play(
+                    *session, disconnect::fmt_desync(ec, "PacketRouter")),
+                asio::detached);
+        });
     packet_router.begin_receiving();
 
     KeepAlive keep_alive { session, packet_router };
