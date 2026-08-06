@@ -189,8 +189,7 @@ void put_login_packet(asio::streambuf &sbuf)
     sbuf.sputc(0);
     // Is superflat world (affects rendering)
     sbuf.sputc(0);
-    // Has death location (since disabled, death dimension name and death
-    // location fields are not present)
+    // Has death location (since disabled, death dimension name and death location fields are not present)
     sbuf.sputc(0);
     // Portal cooldown in ticks
     sbuf.sputc(0);
