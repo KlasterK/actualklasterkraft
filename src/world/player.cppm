@@ -1,33 +1,48 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/asio/experimental/channel.hpp>
 export module actualklasterkraft.world.player;
 
 import actualklasterkraft.bitfields;
+import actualklasterkraft.pubsub;
 import actualklasterkraft.world.math;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
-namespace asiox = asio::experimental;
 
 export class Player
 {
 public:
-    Vec3<double> get_position() const { return m_position; }
-    Vec3<double> get_velocity() const { return m_velocity; }
-    Angle get_pitch() const { return m_pitch; }
-    Angle get_yaw() const { return m_yaw; }
-
-    void update_position_and_rotation(Vec3<double> position, Angle pitch,
-        Angle yaw, PositionAndRotationFlags::IntT flags)
+    struct PosRot
     {
-        m_updposrot_channel.async_receive()
+        Vec3<double> position;
+        Angle pitch;
+        Angle yaw;
+        uint8_t is_on_ground : 1;
+        uint8_t is_pushing_against_wall : 1;
+        uint8_t is_position_present : 1;
+        uint8_t is_rotation_present : 1;
+    };
+
+public:
+    Player(asio::io_context &io)
+        : m_posrot_signal(io)
+    {
+    }
+
+    const PosRot &get_last_posrot() const { return m_last_posrot; }
+
+    void update_posrot(PosRot posrot)
+    {
+        m_last_posrot = posrot;
+        m_posrot_signal.emit({ }, posrot);
+    }
+
+    auto await_for_posrot_update(auto &&completion_token)
+    {
+        return m_posrot_signal.wait(std::move(completion_token));
     }
 
 private:
-    Vec3<double> m_position, m_velocity;
-    Angle m_pitch, m_yaw;
-
-    asiox::channel<void(sys::error_code, Vec3<double> position)>
-        m_updposrot_channel;
+    WeakSignal<void(sys::error_code, PosRot)> m_posrot_signal;
+    PosRot m_last_posrot;
 };

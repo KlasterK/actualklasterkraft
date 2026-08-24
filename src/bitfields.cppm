@@ -15,16 +15,3 @@ export namespace TeleportFlags
     constexpr IntT IsZVelocityRelative = 0x0080;
     constexpr IntT IsVelocityRelativeToNewRotation = 0x0100;
 }
-
-export namespace PositionAndRotationFlags
-{
-    using IntT = uint8_t;
-    /// Original flag from the protocol
-    constexpr IntT IsOnGround = 0x01;
-    /// Original flag from the protocol
-    constexpr IntT IsPushingAgainstWall = 0x02;
-    /// Custom flag, should be cleared before sending
-    constexpr IntT IsPositionPresent = 0x04;
-    /// Custom flag, should be cleared before sending
-    constexpr IntT IsRotationPresent = 0x04;
-};
