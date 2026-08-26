@@ -1,11 +1,5 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
-#include <boost/system/detail/errc.hpp>
-#include <boost/system/detail/error_code.hpp>
-#include <coroutine>
-#include <print>
 #include <tuple>
 #include <vector>
 export module actualklasterkraft.pubsub;
@@ -21,6 +15,11 @@ public:
         : m_io(io)
     {
     }
+
+    WeakSignal(const WeakSignal &) = delete;
+    WeakSignal(WeakSignal &&) = default;
+    WeakSignal &operator=(const WeakSignal &) = delete;
+    WeakSignal &operator=(WeakSignal &&) = default;
 
     void emit(Args... args)
     {
