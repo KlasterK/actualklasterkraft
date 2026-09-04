@@ -52,9 +52,6 @@ private:
 
 void put_login_packet(asio::streambuf &sbuf);
 
-asio::awaitable<void> graceful_disconnect(
-    Session &session, std::string_view sv);
-
 export namespace statecoroutines
 {
     asio::awaitable<void> play(boost::intrusive_ptr<Session> session,
@@ -195,26 +192,6 @@ void put_login_packet(asio::streambuf &sbuf)
     sbuf.sputc(63);
     // Enforce secure chat
     sbuf.sputc(0);
-}
-
-asio::awaitable<void> graceful_disconnect(Session &session, std::string_view sv)
-{
-    session.get_streambuf().consume(session.get_streambuf().size());
-
-    session.get_streambuf().sputc(0x20); // id Disconnect (play)
-    NBTBuilder(std::ostreambuf_iterator(&session.get_streambuf()))
-        << nbtbuilderdefinitions::String << sv;
-
-    sys::error_code ec = co_await packetops::flush_packet(session);
-    if (ec)
-        std::println(
-            "\tCan't send disconnect message to the client (error code: {}; reason: {})",
-            ec, sv);
-    else
-        std::println("\tClient was disconnected with reason: {}", sv);
-
-    session.get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
-    session.get_socket().close();
 }
 
 asio::awaitable<void> statecoroutines::play(

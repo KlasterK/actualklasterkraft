@@ -1,5 +1,6 @@
 module;
 #include <boost/asio.hpp>
+#include <boost/asio/any_io_executor.hpp>
 #include <tuple>
 #include <vector>
 export module actualklasterkraft.pubsub;
@@ -11,7 +12,7 @@ export template <typename Signature> class WeakSignal;
 export template <typename... Args> class WeakSignal<void(Args...)>
 {
 public:
-    WeakSignal(asio::io_context &io)
+    WeakSignal(asio::any_io_executor io)
         : m_io(io)
     {
     }
@@ -71,5 +72,5 @@ public:
 
 private:
     std::vector<asio::any_completion_handler<void(Args...)>> m_awaiters;
-    asio::io_context &m_io;
+    asio::any_io_executor m_io;
 };

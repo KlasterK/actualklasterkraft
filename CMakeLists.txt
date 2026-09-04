@@ -44,9 +44,8 @@ target_sources(actualklasterkraft PUBLIC
         src/packetops.cppm
         src/packetrouter.cppm
         src/prebuiltconfiguration.cppm
+        src/protocolprimitives.cppm
         src/pubsub.cppm
-        src/session.cppm
-        src/streambufops.cppm
     PRIVATE
         src/main.cpp
 )

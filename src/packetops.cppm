@@ -1,17 +1,20 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/system.hpp>
+#include <memory>
 export module actualklasterkraft.packetops;
 
 import actualklasterkraft.errc;
-import actualklasterkraft.session;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
+using asio::ip::tcp;
 
 export namespace packetops
 {
-    asio::awaitable<sys::error_code> await_for_packet(Session &session)
+    template <typename... Args>
+    asio::awaitable<sys::error_code> await_for_packet(
+        tcp::socket &socket, Args... args)
     {
         char byte { };
         int32_t packet_size { };
@@ -20,9 +23,8 @@ export namespace packetops
 
         for (;;)
         {
-            co_await asio::async_read(session.get_socket(),
-                asio::buffer(&byte, 1), asio::transfer_exactly(1),
-                asio::redirect_error(ec));
+            co_await asio::async_read(socket, asio::buffer(&byte, 1),
+                asio::transfer_exactly(1), asio::redirect_error(ec));
             if (ec)
                 co_return ec;
 
@@ -35,10 +37,30 @@ export namespace packetops
                 co_return MCProtocolError::VarIntTooBig;
         }
 
-        co_await asio::async_read(session.get_socket(), session.get_streambuf(),
-            asio::transfer_exactly(packet_size), asio::redirect_error(ec));
+        if (packet_size > (1 << 23) || packet_size < 1)
+            co_return MCProtocolError::MalformedPacketHeader;
 
-        co_return ec;
+        size_t nread
+            = co_await asio::async_read(socket, std::make_tuple(args...),
+                asio::transfer_exactly(packet_size), asio::redirect_error(ec));
+        if (ec)
+            co_return ec;
+
+        if (nread < size_t(packet_size))
+        {
+            auto drop_buf = std::make_unique_for_overwrite<uint8_t[]>(
+                packet_size - nread);
+
+            co_await asio::async_read(socket,
+                asio::buffer(drop_buf.get(), packet_size - nread),
+                asio::transfer_all(), asio::redirect_error(ec));
+            if (ec)
+                co_return ec;
+
+            co_return MCProtocolError::NotEnoughBuffersToFitPacket;
+        }
+
+        co_return { };
     }
 
     asio::awaitable<sys::error_code> flush_packet(Session &session,
@@ -48,7 +70,9 @@ export namespace packetops
         std::array<uint8_t, 5> size_buf;
         uint8_t *size_end = size_buf.begin();
 
-        for (uint32_t value = override_buf ? override_buf->size() : session.get_streambuf().size();;)
+        for (uint32_t value = override_buf ? override_buf->size()
+                                           : session.get_streambuf().size();
+            ;)
         {
             if ((value & ~0x7F) == 0)
             {

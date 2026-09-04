@@ -1,32 +1,27 @@
 module;
 #include <array>
 #include <cstdint>
-#include <iterator>
-#include <optional>
+#include <string>
 #include <tuple>
-#include <vector>
 export module actualklasterkraft.prebuiltconfiguration;
 
-import actualklasterkraft.streambufops;
+import actualklasterkraft.protocolprimitives;
+
+using namespace protocolprimitives;
 
 struct ConfigurationPackets
 {
     std::array<uint8_t, 65536> data;
     std::array<size_t, 32> lengths;
-
-    using DataOutputIt = decltype(data)::iterator;
-    using LengthsOutputIt = decltype(lengths)::iterator;
 };
 
-struct StubNBT
-{
-    StubNBT() = delete;
-};
+using DataIt = decltype(ConfigurationPackets::data)::iterator;
+using LengthsIt = decltype(ConfigurationPackets::lengths)::iterator;
 
 struct RegistryDataEntry
 {
     std::string_view name;
-    std::optional<StubNBT> nbt;
+    DataIt (*nbt_putter)(DataIt) = nullptr;
 };
 
 template <size_t NEntries> struct RegistryData
@@ -35,24 +30,27 @@ template <size_t NEntries> struct RegistryData
     std::string_view name;
     std::array<RegistryDataEntry, NEntries> entries;
 
-    constexpr ConfigurationPackets::DataOutputIt put(
-        ConfigurationPackets::DataOutputIt it) const
+    constexpr DataIt put(DataIt it) const
     {
         *it++ = ClientboundPacketID;
-        it = protocoltypes::write_string(it, name);
-        it = protocoltypes::write_v32(it, entries.size());
+        it = write_string(it, name);
+        it = write_var<uint32_t>(it, entries.size());
         for (auto &entry : entries)
         {
-            it = protocoltypes::write_string(it, entry.name);
-            *it++ = 0; // empty prefixed optional
+            it = write_string(it, entry.name);
+            if (entry.nbt_putter == nullptr)
+            {
+                *it++ = 0;
+            }
+            else
+            {
+                *it++ = 1;
+                it = entry.nbt_putter(it);
+            }
         }
         return it;
     }
 };
-
-// template <size_t NEntries>
-// RegistryData(std::string_view, std::array<RegistryDataEntry, NEntries>)
-//     -> RegistryData<NEntries>;
 
 struct KnownPack
 {
@@ -65,16 +63,15 @@ template <size_t NKnownPacks> struct KnownPacks
     static constexpr uint8_t ServerboundPacketID = 0x07;
     std::array<KnownPack, NKnownPacks> known_packs;
 
-    constexpr ConfigurationPackets::DataOutputIt put(
-        ConfigurationPackets::DataOutputIt it) const
+    constexpr DataIt put(DataIt it) const
     {
         *it++ = ClientboundPacketID;
-        it = protocoltypes::write_v32(it, known_packs.size());
-        for (auto &pack : known_packs)
+        it = write_var<uint32_t>(it, known_packs.size());
+        for (const auto &pack : known_packs)
         {
-            it = protocoltypes::write_string(it, pack.the_namespace);
-            it = protocoltypes::write_string(it, pack.id);
-            it = protocoltypes::write_string(it, pack.version);
+            it = write_string(it, pack.the_namespace);
+            it = write_string(it, pack.id);
+            it = write_string(it, pack.version);
         }
         return it;
     }
@@ -85,13 +82,13 @@ template <size_t NEntries> struct Tag
     std::string_view name;
     std::array<int32_t, NEntries> entries;
 
-    constexpr void put_mutate_it(ConfigurationPackets::DataOutputIt &it) const
+    constexpr void put_mutate_it(DataIt &it) const
     {
-        it = protocoltypes::write_string(it, name);
-        it = protocoltypes::write_v32(it, entries.size());
+        it = write_string(it, name);
+        it = write_var<uint32_t>(it, entries.size());
         for (int32_t entry : entries)
         {
-            it = protocoltypes::write_v32(it, entry);
+            it = write_var(it, entry);
         }
     }
 };
@@ -101,10 +98,10 @@ template <size_t... NsEntries> struct TaggedRegistry
     std::string_view name;
     std::tuple<Tag<NsEntries>...> tags;
 
-    constexpr void put_mutate_it(ConfigurationPackets::DataOutputIt &it) const
+    constexpr void put_mutate_it(DataIt &it) const
     {
-        it = protocoltypes::write_string(it, name);
-        it = protocoltypes::write_v32(it, sizeof...(NsEntries));
+        it = write_string(it, name);
+        it = write_var<uint32_t>(it, sizeof...(NsEntries));
         std::apply([&](const Tag<NsEntries> &...tags)
             { (tags.put_mutate_it(it), ...); }, tags);
     }
@@ -119,12 +116,10 @@ template <typename... InstantiatedTaggedRegistries> struct UpdateTags
     static constexpr uint8_t ClientboundPacketID = 0x0D;
     std::tuple<InstantiatedTaggedRegistries...> tagged_registries;
 
-    constexpr ConfigurationPackets::DataOutputIt put(
-        ConfigurationPackets::DataOutputIt it) const
+    constexpr DataIt put(DataIt it) const
     {
         *it++ = ClientboundPacketID;
-        it = protocoltypes::write_v32(
-            it, sizeof...(InstantiatedTaggedRegistries));
+        it = write_var<uint32_t>(it, sizeof...(InstantiatedTaggedRegistries));
         std::apply([&](const InstantiatedTaggedRegistries &...registries)
             { (registries.put_mutate_it(it), ...); }, tagged_registries);
         return it;
@@ -139,11 +134,10 @@ export constexpr ConfigurationPackets PrebuiltConfigurationStatePackets
     = [] consteval
 {
     ConfigurationPackets cp { };
-    ConfigurationPackets::DataOutputIt data_output_it = cp.data.begin();
-    ConfigurationPackets::LengthsOutputIt lengths_output_it
-        = cp.lengths.begin();
+    DataIt data_output_it = cp.data.begin();
+    LengthsIt lengths_output_it = cp.lengths.begin();
 
-    auto fwd = [&](ConfigurationPackets::DataOutputIt data_forwarded_it)
+    auto fwd = [&](DataIt data_forwarded_it)
     {
         *lengths_output_it++ = data_forwarded_it - data_output_it;
         data_output_it = data_forwarded_it;
@@ -156,523 +150,523 @@ export constexpr ConfigurationPackets PrebuiltConfigurationStatePackets
 
     fwd(RegistryData { "minecraft:worldgen/biome",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:badlands", { } },
-            { "minecraft:bamboo_jungle", { } },
-            { "minecraft:basalt_deltas", { } },
-            { "minecraft:beach", { } },
-            { "minecraft:birch_forest", { } },
-            { "minecraft:cherry_grove", { } },
-            { "minecraft:cold_ocean", { } },
-            { "minecraft:crimson_forest", { } },
-            { "minecraft:dark_forest", { } },
-            { "minecraft:deep_cold_ocean", { } },
-            { "minecraft:deep_dark", { } },
-            { "minecraft:deep_frozen_ocean", { } },
-            { "minecraft:deep_lukewarm_ocean", { } },
-            { "minecraft:deep_ocean", { } },
-            { "minecraft:desert", { } },
-            { "minecraft:dripstone_caves", { } },
-            { "minecraft:end_barrens", { } },
-            { "minecraft:end_highlands", { } },
-            { "minecraft:end_midlands", { } },
-            { "minecraft:eroded_badlands", { } },
-            { "minecraft:flower_forest", { } },
-            { "minecraft:forest", { } },
-            { "minecraft:frozen_ocean", { } },
-            { "minecraft:frozen_peaks", { } },
-            { "minecraft:frozen_river", { } },
-            { "minecraft:grove", { } },
-            { "minecraft:ice_spikes", { } },
-            { "minecraft:jagged_peaks", { } },
-            { "minecraft:jungle", { } },
-            { "minecraft:lukewarm_ocean", { } },
-            { "minecraft:lush_caves", { } },
-            { "minecraft:mangrove_swamp", { } },
-            { "minecraft:meadow", { } },
-            { "minecraft:mushroom_fields", { } },
-            { "minecraft:nether_wastes", { } },
-            { "minecraft:ocean", { } },
-            { "minecraft:old_growth_birch_forest", { } },
-            { "minecraft:old_growth_pine_taiga", { } },
-            { "minecraft:old_growth_spruce_taiga", { } },
-            { "minecraft:pale_garden", { } },
-            { "minecraft:plains", { } },
-            { "minecraft:river", { } },
-            { "minecraft:savanna", { } },
-            { "minecraft:savanna_plateau", { } },
-            { "minecraft:small_end_islands", { } },
-            { "minecraft:snowy_beach", { } },
-            { "minecraft:snowy_plains", { } },
-            { "minecraft:snowy_slopes", { } },
-            { "minecraft:snowy_taiga", { } },
-            { "minecraft:soul_sand_valley", { } },
-            { "minecraft:sparse_jungle", { } },
-            { "minecraft:stony_peaks", { } },
-            { "minecraft:stony_shore", { } },
-            { "minecraft:sunflower_plains", { } },
-            { "minecraft:swamp", { } },
-            { "minecraft:taiga", { } },
-            { "minecraft:the_end", { } },
-            { "minecraft:the_void", { } },
-            { "minecraft:warm_ocean", { } },
-            { "minecraft:warped_forest", { } },
-            { "minecraft:windswept_forest", { } },
-            { "minecraft:windswept_gravelly_hills", { } },
-            { "minecraft:windswept_hills", { } },
-            { "minecraft:windswept_savanna", { } },
-            { "minecraft:wooded_badlands", { } },
+            { "minecraft:badlands", nullptr },
+            { "minecraft:bamboo_jungle", nullptr },
+            { "minecraft:basalt_deltas", nullptr },
+            { "minecraft:beach", nullptr },
+            { "minecraft:birch_forest", nullptr },
+            { "minecraft:cherry_grove", nullptr },
+            { "minecraft:cold_ocean", nullptr },
+            { "minecraft:crimson_forest", nullptr },
+            { "minecraft:dark_forest", nullptr },
+            { "minecraft:deep_cold_ocean", nullptr },
+            { "minecraft:deep_dark", nullptr },
+            { "minecraft:deep_frozen_ocean", nullptr },
+            { "minecraft:deep_lukewarm_ocean", nullptr },
+            { "minecraft:deep_ocean", nullptr },
+            { "minecraft:desert", nullptr },
+            { "minecraft:dripstone_caves", nullptr },
+            { "minecraft:end_barrens", nullptr },
+            { "minecraft:end_highlands", nullptr },
+            { "minecraft:end_midlands", nullptr },
+            { "minecraft:eroded_badlands", nullptr },
+            { "minecraft:flower_forest", nullptr },
+            { "minecraft:forest", nullptr },
+            { "minecraft:frozen_ocean", nullptr },
+            { "minecraft:frozen_peaks", nullptr },
+            { "minecraft:frozen_river", nullptr },
+            { "minecraft:grove", nullptr },
+            { "minecraft:ice_spikes", nullptr },
+            { "minecraft:jagged_peaks", nullptr },
+            { "minecraft:jungle", nullptr },
+            { "minecraft:lukewarm_ocean", nullptr },
+            { "minecraft:lush_caves", nullptr },
+            { "minecraft:mangrove_swamp", nullptr },
+            { "minecraft:meadow", nullptr },
+            { "minecraft:mushroom_fields", nullptr },
+            { "minecraft:nether_wastes", nullptr },
+            { "minecraft:ocean", nullptr },
+            { "minecraft:old_growth_birch_forest", nullptr },
+            { "minecraft:old_growth_pine_taiga", nullptr },
+            { "minecraft:old_growth_spruce_taiga", nullptr },
+            { "minecraft:pale_garden", nullptr },
+            { "minecraft:plains", nullptr },
+            { "minecraft:river", nullptr },
+            { "minecraft:savanna", nullptr },
+            { "minecraft:savanna_plateau", nullptr },
+            { "minecraft:small_end_islands", nullptr },
+            { "minecraft:snowy_beach", nullptr },
+            { "minecraft:snowy_plains", nullptr },
+            { "minecraft:snowy_slopes", nullptr },
+            { "minecraft:snowy_taiga", nullptr },
+            { "minecraft:soul_sand_valley", nullptr },
+            { "minecraft:sparse_jungle", nullptr },
+            { "minecraft:stony_peaks", nullptr },
+            { "minecraft:stony_shore", nullptr },
+            { "minecraft:sunflower_plains", nullptr },
+            { "minecraft:swamp", nullptr },
+            { "minecraft:taiga", nullptr },
+            { "minecraft:the_end", nullptr },
+            { "minecraft:the_void", nullptr },
+            { "minecraft:warm_ocean", nullptr },
+            { "minecraft:warped_forest", nullptr },
+            { "minecraft:windswept_forest", nullptr },
+            { "minecraft:windswept_gravelly_hills", nullptr },
+            { "minecraft:windswept_hills", nullptr },
+            { "minecraft:windswept_savanna", nullptr },
+            { "minecraft:wooded_badlands", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:chat_type",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:chat", { } },
-            { "minecraft:emote_command", { } },
-            { "minecraft:msg_command_incoming", { } },
-            { "minecraft:msg_command_outgoing", { } },
-            { "minecraft:say_command", { } },
-            { "minecraft:team_msg_command_incoming", { } },
-            { "minecraft:team_msg_command_outgoing", { } },
+            { "minecraft:chat", nullptr },
+            { "minecraft:emote_command", nullptr },
+            { "minecraft:msg_command_incoming", nullptr },
+            { "minecraft:msg_command_outgoing", nullptr },
+            { "minecraft:say_command", nullptr },
+            { "minecraft:team_msg_command_incoming", nullptr },
+            { "minecraft:team_msg_command_outgoing", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:trim_pattern",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:bolt", { } },
-            { "minecraft:coast", { } },
-            { "minecraft:dune", { } },
-            { "minecraft:eye", { } },
-            { "minecraft:flow", { } },
-            { "minecraft:host", { } },
-            { "minecraft:raiser", { } },
-            { "minecraft:rib", { } },
-            { "minecraft:sentry", { } },
-            { "minecraft:shaper", { } },
-            { "minecraft:silence", { } },
-            { "minecraft:snout", { } },
-            { "minecraft:spire", { } },
-            { "minecraft:tide", { } },
-            { "minecraft:vex", { } },
-            { "minecraft:ward", { } },
-            { "minecraft:wayfinder", { } },
-            { "minecraft:wild", { } },
+            { "minecraft:bolt", nullptr },
+            { "minecraft:coast", nullptr },
+            { "minecraft:dune", nullptr },
+            { "minecraft:eye", nullptr },
+            { "minecraft:flow", nullptr },
+            { "minecraft:host", nullptr },
+            { "minecraft:raiser", nullptr },
+            { "minecraft:rib", nullptr },
+            { "minecraft:sentry", nullptr },
+            { "minecraft:shaper", nullptr },
+            { "minecraft:silence", nullptr },
+            { "minecraft:snout", nullptr },
+            { "minecraft:spire", nullptr },
+            { "minecraft:tide", nullptr },
+            { "minecraft:vex", nullptr },
+            { "minecraft:ward", nullptr },
+            { "minecraft:wayfinder", nullptr },
+            { "minecraft:wild", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:trim_material",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:amethyst", { } },
-            { "minecraft:copper", { } },
-            { "minecraft:diamond", { } },
-            { "minecraft:emerald", { } },
-            { "minecraft:gold", { } },
-            { "minecraft:iron", { } },
-            { "minecraft:lapis", { } },
-            { "minecraft:netherite", { } },
-            { "minecraft:quartz", { } },
-            { "minecraft:redstone", { } },
-            { "minecraft:resin", { } },
+            { "minecraft:amethyst", nullptr },
+            { "minecraft:copper", nullptr },
+            { "minecraft:diamond", nullptr },
+            { "minecraft:emerald", nullptr },
+            { "minecraft:gold", nullptr },
+            { "minecraft:iron", nullptr },
+            { "minecraft:lapis", nullptr },
+            { "minecraft:netherite", nullptr },
+            { "minecraft:quartz", nullptr },
+            { "minecraft:redstone", nullptr },
+            { "minecraft:resin", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:wolf_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:ashen", { } },
-            { "minecraft:black", { } },
-            { "minecraft:chestnut", { } },
-            { "minecraft:pale", { } },
-            { "minecraft:rusty", { } },
-            { "minecraft:snowy", { } },
-            { "minecraft:spotted", { } },
-            { "minecraft:striped", { } },
-            { "minecraft:woods", { } },
+            { "minecraft:ashen", nullptr },
+            { "minecraft:black", nullptr },
+            { "minecraft:chestnut", nullptr },
+            { "minecraft:pale", nullptr },
+            { "minecraft:rusty", nullptr },
+            { "minecraft:snowy", nullptr },
+            { "minecraft:spotted", nullptr },
+            { "minecraft:striped", nullptr },
+            { "minecraft:woods", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:wolf_sound_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:angry", { } },
-            { "minecraft:big", { } },
-            { "minecraft:classic", { } },
-            { "minecraft:cute", { } },
-            { "minecraft:grumpy", { } },
-            { "minecraft:puglin", { } },
-            { "minecraft:sad", { } },
+            { "minecraft:angry", nullptr },
+            { "minecraft:big", nullptr },
+            { "minecraft:classic", nullptr },
+            { "minecraft:cute", nullptr },
+            { "minecraft:grumpy", nullptr },
+            { "minecraft:puglin", nullptr },
+            { "minecraft:sad", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:pig_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:cold", { } },
-            { "minecraft:temperate", { } },
-            { "minecraft:warm", { } },
+            { "minecraft:cold", nullptr },
+            { "minecraft:temperate", nullptr },
+            { "minecraft:warm", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:cat_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:all_black", { } },
-            { "minecraft:black", { } },
-            { "minecraft:british_shorthair", { } },
-            { "minecraft:calico", { } },
-            { "minecraft:jellie", { } },
-            { "minecraft:persian", { } },
-            { "minecraft:ragdoll", { } },
-            { "minecraft:red", { } },
-            { "minecraft:siamese", { } },
-            { "minecraft:tabby", { } },
-            { "minecraft:white", { } },
+            { "minecraft:all_black", nullptr },
+            { "minecraft:black", nullptr },
+            { "minecraft:british_shorthair", nullptr },
+            { "minecraft:calico", nullptr },
+            { "minecraft:jellie", nullptr },
+            { "minecraft:persian", nullptr },
+            { "minecraft:ragdoll", nullptr },
+            { "minecraft:red", nullptr },
+            { "minecraft:siamese", nullptr },
+            { "minecraft:tabby", nullptr },
+            { "minecraft:white", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:cat_sound_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:classic", { } },
-            { "minecraft:royal", { } },
+            { "minecraft:classic", nullptr },
+            { "minecraft:royal", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:cow_sound_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:classic", { } },
-            { "minecraft:moody", { } },
+            { "minecraft:classic", nullptr },
+            { "minecraft:moody", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:cow_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:cold", { } },
-            { "minecraft:temperate", { } },
-            { "minecraft:warm", { } },
+            { "minecraft:cold", nullptr },
+            { "minecraft:temperate", nullptr },
+            { "minecraft:warm", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:chicken_sound_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:classic", { } },
-            { "minecraft:picky", { } },
+            { "minecraft:classic", nullptr },
+            { "minecraft:picky", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:chicken_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:cold", { } },
-            { "minecraft:temperate", { } },
-            { "minecraft:warm", { } },
+            { "minecraft:cold", nullptr },
+            { "minecraft:temperate", nullptr },
+            { "minecraft:warm", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:zombie_nautilus_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:temperate", { } },
-            { "minecraft:warm", { } },
+            { "minecraft:temperate", nullptr },
+            { "minecraft:warm", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:painting_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:alban", { } },
-            { "minecraft:aztec", { } },
-            { "minecraft:aztec2", { } },
-            { "minecraft:backyard", { } },
-            { "minecraft:baroque", { } },
-            { "minecraft:bomb", { } },
-            { "minecraft:bouquet", { } },
-            { "minecraft:burning_skull", { } },
-            { "minecraft:bust", { } },
-            { "minecraft:cavebird", { } },
-            { "minecraft:changing", { } },
-            { "minecraft:cotan", { } },
-            { "minecraft:courbet", { } },
-            { "minecraft:creebet", { } },
-            { "minecraft:dennis", { } },
-            { "minecraft:donkey_kong", { } },
-            { "minecraft:earth", { } },
-            { "minecraft:endboss", { } },
-            { "minecraft:fern", { } },
-            { "minecraft:fighters", { } },
-            { "minecraft:finding", { } },
-            { "minecraft:fire", { } },
-            { "minecraft:graham", { } },
-            { "minecraft:humble", { } },
-            { "minecraft:kebab", { } },
-            { "minecraft:lowmist", { } },
-            { "minecraft:match", { } },
-            { "minecraft:meditative", { } },
-            { "minecraft:orb", { } },
-            { "minecraft:owlemons", { } },
-            { "minecraft:passage", { } },
-            { "minecraft:pigscene", { } },
-            { "minecraft:plant", { } },
-            { "minecraft:pointer", { } },
-            { "minecraft:pond", { } },
-            { "minecraft:pool", { } },
-            { "minecraft:prairie_ride", { } },
-            { "minecraft:sea", { } },
-            { "minecraft:skeleton", { } },
-            { "minecraft:skull_and_roses", { } },
-            { "minecraft:stage", { } },
-            { "minecraft:sunflowers", { } },
-            { "minecraft:sunset", { } },
-            { "minecraft:tides", { } },
-            { "minecraft:unpacked", { } },
-            { "minecraft:void", { } },
-            { "minecraft:wanderer", { } },
-            { "minecraft:wasteland", { } },
-            { "minecraft:water", { } },
-            { "minecraft:wind", { } },
-            { "minecraft:wither", { } },
+            { "minecraft:alban", nullptr },
+            { "minecraft:aztec", nullptr },
+            { "minecraft:aztec2", nullptr },
+            { "minecraft:backyard", nullptr },
+            { "minecraft:baroque", nullptr },
+            { "minecraft:bomb", nullptr },
+            { "minecraft:bouquet", nullptr },
+            { "minecraft:burning_skull", nullptr },
+            { "minecraft:bust", nullptr },
+            { "minecraft:cavebird", nullptr },
+            { "minecraft:changing", nullptr },
+            { "minecraft:cotan", nullptr },
+            { "minecraft:courbet", nullptr },
+            { "minecraft:creebet", nullptr },
+            { "minecraft:dennis", nullptr },
+            { "minecraft:donkey_kong", nullptr },
+            { "minecraft:earth", nullptr },
+            { "minecraft:endboss", nullptr },
+            { "minecraft:fern", nullptr },
+            { "minecraft:fighters", nullptr },
+            { "minecraft:finding", nullptr },
+            { "minecraft:fire", nullptr },
+            { "minecraft:graham", nullptr },
+            { "minecraft:humble", nullptr },
+            { "minecraft:kebab", nullptr },
+            { "minecraft:lowmist", nullptr },
+            { "minecraft:match", nullptr },
+            { "minecraft:meditative", nullptr },
+            { "minecraft:orb", nullptr },
+            { "minecraft:owlemons", nullptr },
+            { "minecraft:passage", nullptr },
+            { "minecraft:pigscene", nullptr },
+            { "minecraft:plant", nullptr },
+            { "minecraft:pointer", nullptr },
+            { "minecraft:pond", nullptr },
+            { "minecraft:pool", nullptr },
+            { "minecraft:prairie_ride", nullptr },
+            { "minecraft:sea", nullptr },
+            { "minecraft:skeleton", nullptr },
+            { "minecraft:skull_and_roses", nullptr },
+            { "minecraft:stage", nullptr },
+            { "minecraft:sunflowers", nullptr },
+            { "minecraft:sunset", nullptr },
+            { "minecraft:tides", nullptr },
+            { "minecraft:unpacked", nullptr },
+            { "minecraft:void", nullptr },
+            { "minecraft:wanderer", nullptr },
+            { "minecraft:wasteland", nullptr },
+            { "minecraft:water", nullptr },
+            { "minecraft:wind", nullptr },
+            { "minecraft:wither", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:dimension_type",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:overworld", { } },
-            { "minecraft:overworld_caves", { } },
-            { "minecraft:the_end", { } },
-            { "minecraft:the_nether", { } },
+            { "minecraft:overworld", nullptr },
+            { "minecraft:overworld_caves", nullptr },
+            { "minecraft:the_end", nullptr },
+            { "minecraft:the_nether", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:damage_type",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:arrow", { } },
-            { "minecraft:bad_respawn_point", { } },
-            { "minecraft:cactus", { } },
-            { "minecraft:campfire", { } },
-            { "minecraft:cramming", { } },
-            { "minecraft:dragon_breath", { } },
-            { "minecraft:drown", { } },
-            { "minecraft:dry_out", { } },
-            { "minecraft:ender_pearl", { } },
-            { "minecraft:explosion", { } },
-            { "minecraft:fall", { } },
-            { "minecraft:falling_anvil", { } },
-            { "minecraft:falling_block", { } },
-            { "minecraft:falling_stalactite", { } },
-            { "minecraft:fireball", { } },
-            { "minecraft:fireworks", { } },
-            { "minecraft:fly_into_wall", { } },
-            { "minecraft:freeze", { } },
-            { "minecraft:generic", { } },
-            { "minecraft:generic_kill", { } },
-            { "minecraft:hot_floor", { } },
-            { "minecraft:in_fire", { } },
-            { "minecraft:in_wall", { } },
-            { "minecraft:indirect_magic", { } },
-            { "minecraft:lava", { } },
-            { "minecraft:lightning_bolt", { } },
-            { "minecraft:mace_smash", { } },
-            { "minecraft:magic", { } },
-            { "minecraft:mob_attack", { } },
-            { "minecraft:mob_attack_no_aggro", { } },
-            { "minecraft:mob_projectile", { } },
-            { "minecraft:on_fire", { } },
-            { "minecraft:out_of_world", { } },
-            { "minecraft:outside_border", { } },
-            { "minecraft:player_attack", { } },
-            { "minecraft:player_explosion", { } },
-            { "minecraft:sonic_boom", { } },
-            { "minecraft:spear", { } },
-            { "minecraft:spit", { } },
-            { "minecraft:stalagmite", { } },
-            { "minecraft:starve", { } },
-            { "minecraft:sting", { } },
-            { "minecraft:sweet_berry_bush", { } },
-            { "minecraft:thorns", { } },
-            { "minecraft:thrown", { } },
-            { "minecraft:trident", { } },
-            { "minecraft:unattributed_fireball", { } },
-            { "minecraft:wind_charge", { } },
-            { "minecraft:wither", { } },
-            { "minecraft:wither_skull", { } },
+            { "minecraft:arrow", nullptr },
+            { "minecraft:bad_respawn_point", nullptr },
+            { "minecraft:cactus", nullptr },
+            { "minecraft:campfire", nullptr },
+            { "minecraft:cramming", nullptr },
+            { "minecraft:dragon_breath", nullptr },
+            { "minecraft:drown", nullptr },
+            { "minecraft:dry_out", nullptr },
+            { "minecraft:ender_pearl", nullptr },
+            { "minecraft:explosion", nullptr },
+            { "minecraft:fall", nullptr },
+            { "minecraft:falling_anvil", nullptr },
+            { "minecraft:falling_block", nullptr },
+            { "minecraft:falling_stalactite", nullptr },
+            { "minecraft:fireball", nullptr },
+            { "minecraft:fireworks", nullptr },
+            { "minecraft:fly_into_wall", nullptr },
+            { "minecraft:freeze", nullptr },
+            { "minecraft:generic", nullptr },
+            { "minecraft:generic_kill", nullptr },
+            { "minecraft:hot_floor", nullptr },
+            { "minecraft:in_fire", nullptr },
+            { "minecraft:in_wall", nullptr },
+            { "minecraft:indirect_magic", nullptr },
+            { "minecraft:lava", nullptr },
+            { "minecraft:lightning_bolt", nullptr },
+            { "minecraft:mace_smash", nullptr },
+            { "minecraft:magic", nullptr },
+            { "minecraft:mob_attack", nullptr },
+            { "minecraft:mob_attack_no_aggro", nullptr },
+            { "minecraft:mob_projectile", nullptr },
+            { "minecraft:on_fire", nullptr },
+            { "minecraft:out_of_world", nullptr },
+            { "minecraft:outside_border", nullptr },
+            { "minecraft:player_attack", nullptr },
+            { "minecraft:player_explosion", nullptr },
+            { "minecraft:sonic_boom", nullptr },
+            { "minecraft:spear", nullptr },
+            { "minecraft:spit", nullptr },
+            { "minecraft:stalagmite", nullptr },
+            { "minecraft:starve", nullptr },
+            { "minecraft:sting", nullptr },
+            { "minecraft:sweet_berry_bush", nullptr },
+            { "minecraft:thorns", nullptr },
+            { "minecraft:thrown", nullptr },
+            { "minecraft:trident", nullptr },
+            { "minecraft:unattributed_fireball", nullptr },
+            { "minecraft:wind_charge", nullptr },
+            { "minecraft:wither", nullptr },
+            { "minecraft:wither_skull", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:banner_pattern",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:base", { } },
-            { "minecraft:border", { } },
-            { "minecraft:bricks", { } },
-            { "minecraft:circle", { } },
-            { "minecraft:creeper", { } },
-            { "minecraft:cross", { } },
-            { "minecraft:curly_border", { } },
-            { "minecraft:diagonal_left", { } },
-            { "minecraft:diagonal_right", { } },
-            { "minecraft:diagonal_up_left", { } },
-            { "minecraft:diagonal_up_right", { } },
-            { "minecraft:flow", { } },
-            { "minecraft:flower", { } },
-            { "minecraft:globe", { } },
-            { "minecraft:gradient", { } },
-            { "minecraft:gradient_up", { } },
-            { "minecraft:guster", { } },
-            { "minecraft:half_horizontal", { } },
-            { "minecraft:half_horizontal_bottom", { } },
-            { "minecraft:half_vertical", { } },
-            { "minecraft:half_vertical_right", { } },
-            { "minecraft:mojang", { } },
-            { "minecraft:piglin", { } },
-            { "minecraft:rhombus", { } },
-            { "minecraft:skull", { } },
-            { "minecraft:small_stripes", { } },
-            { "minecraft:square_bottom_left", { } },
-            { "minecraft:square_bottom_right", { } },
-            { "minecraft:square_top_left", { } },
-            { "minecraft:square_top_right", { } },
-            { "minecraft:straight_cross", { } },
-            { "minecraft:stripe_bottom", { } },
-            { "minecraft:stripe_center", { } },
-            { "minecraft:stripe_downleft", { } },
-            { "minecraft:stripe_downright", { } },
-            { "minecraft:stripe_left", { } },
-            { "minecraft:stripe_middle", { } },
-            { "minecraft:stripe_right", { } },
-            { "minecraft:stripe_top", { } },
-            { "minecraft:triangle_bottom", { } },
-            { "minecraft:triangle_top", { } },
-            { "minecraft:triangles_bottom", { } },
-            { "minecraft:triangles_top", { } },
+            { "minecraft:base", nullptr },
+            { "minecraft:border", nullptr },
+            { "minecraft:bricks", nullptr },
+            { "minecraft:circle", nullptr },
+            { "minecraft:creeper", nullptr },
+            { "minecraft:cross", nullptr },
+            { "minecraft:curly_border", nullptr },
+            { "minecraft:diagonal_left", nullptr },
+            { "minecraft:diagonal_right", nullptr },
+            { "minecraft:diagonal_up_left", nullptr },
+            { "minecraft:diagonal_up_right", nullptr },
+            { "minecraft:flow", nullptr },
+            { "minecraft:flower", nullptr },
+            { "minecraft:globe", nullptr },
+            { "minecraft:gradient", nullptr },
+            { "minecraft:gradient_up", nullptr },
+            { "minecraft:guster", nullptr },
+            { "minecraft:half_horizontal", nullptr },
+            { "minecraft:half_horizontal_bottom", nullptr },
+            { "minecraft:half_vertical", nullptr },
+            { "minecraft:half_vertical_right", nullptr },
+            { "minecraft:mojang", nullptr },
+            { "minecraft:piglin", nullptr },
+            { "minecraft:rhombus", nullptr },
+            { "minecraft:skull", nullptr },
+            { "minecraft:small_stripes", nullptr },
+            { "minecraft:square_bottom_left", nullptr },
+            { "minecraft:square_bottom_right", nullptr },
+            { "minecraft:square_top_left", nullptr },
+            { "minecraft:square_top_right", nullptr },
+            { "minecraft:straight_cross", nullptr },
+            { "minecraft:stripe_bottom", nullptr },
+            { "minecraft:stripe_center", nullptr },
+            { "minecraft:stripe_downleft", nullptr },
+            { "minecraft:stripe_downright", nullptr },
+            { "minecraft:stripe_left", nullptr },
+            { "minecraft:stripe_middle", nullptr },
+            { "minecraft:stripe_right", nullptr },
+            { "minecraft:stripe_top", nullptr },
+            { "minecraft:triangle_bottom", nullptr },
+            { "minecraft:triangle_top", nullptr },
+            { "minecraft:triangles_bottom", nullptr },
+            { "minecraft:triangles_top", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:enchantment",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:aqua_affinity", { } },
-            { "minecraft:bane_of_arthropods", { } },
-            { "minecraft:binding_curse", { } },
-            { "minecraft:blast_protection", { } },
-            { "minecraft:breach", { } },
-            { "minecraft:channeling", { } },
-            { "minecraft:density", { } },
-            { "minecraft:depth_strider", { } },
-            { "minecraft:efficiency", { } },
-            { "minecraft:feather_falling", { } },
-            { "minecraft:fire_aspect", { } },
-            { "minecraft:fire_protection", { } },
-            { "minecraft:flame", { } },
-            { "minecraft:fortune", { } },
-            { "minecraft:frost_walker", { } },
-            { "minecraft:impaling", { } },
-            { "minecraft:infinity", { } },
-            { "minecraft:knockback", { } },
-            { "minecraft:looting", { } },
-            { "minecraft:loyalty", { } },
-            { "minecraft:luck_of_the_sea", { } },
-            { "minecraft:lunge", { } },
-            { "minecraft:lure", { } },
-            { "minecraft:mending", { } },
-            { "minecraft:multishot", { } },
-            { "minecraft:piercing", { } },
-            { "minecraft:power", { } },
-            { "minecraft:projectile_protection", { } },
-            { "minecraft:protection", { } },
-            { "minecraft:punch", { } },
-            { "minecraft:quick_charge", { } },
-            { "minecraft:respiration", { } },
-            { "minecraft:riptide", { } },
-            { "minecraft:sharpness", { } },
-            { "minecraft:silk_touch", { } },
-            { "minecraft:smite", { } },
-            { "minecraft:soul_speed", { } },
-            { "minecraft:sweeping_edge", { } },
-            { "minecraft:swift_sneak", { } },
-            { "minecraft:thorns", { } },
-            { "minecraft:unbreaking", { } },
-            { "minecraft:vanishing_curse", { } },
-            { "minecraft:wind_burst", { } },
+            { "minecraft:aqua_affinity", nullptr },
+            { "minecraft:bane_of_arthropods", nullptr },
+            { "minecraft:binding_curse", nullptr },
+            { "minecraft:blast_protection", nullptr },
+            { "minecraft:breach", nullptr },
+            { "minecraft:channeling", nullptr },
+            { "minecraft:density", nullptr },
+            { "minecraft:depth_strider", nullptr },
+            { "minecraft:efficiency", nullptr },
+            { "minecraft:feather_falling", nullptr },
+            { "minecraft:fire_aspect", nullptr },
+            { "minecraft:fire_protection", nullptr },
+            { "minecraft:flame", nullptr },
+            { "minecraft:fortune", nullptr },
+            { "minecraft:frost_walker", nullptr },
+            { "minecraft:impaling", nullptr },
+            { "minecraft:infinity", nullptr },
+            { "minecraft:knockback", nullptr },
+            { "minecraft:looting", nullptr },
+            { "minecraft:loyalty", nullptr },
+            { "minecraft:luck_of_the_sea", nullptr },
+            { "minecraft:lunge", nullptr },
+            { "minecraft:lure", nullptr },
+            { "minecraft:mending", nullptr },
+            { "minecraft:multishot", nullptr },
+            { "minecraft:piercing", nullptr },
+            { "minecraft:power", nullptr },
+            { "minecraft:projectile_protection", nullptr },
+            { "minecraft:protection", nullptr },
+            { "minecraft:punch", nullptr },
+            { "minecraft:quick_charge", nullptr },
+            { "minecraft:respiration", nullptr },
+            { "minecraft:riptide", nullptr },
+            { "minecraft:sharpness", nullptr },
+            { "minecraft:silk_touch", nullptr },
+            { "minecraft:smite", nullptr },
+            { "minecraft:soul_speed", nullptr },
+            { "minecraft:sweeping_edge", nullptr },
+            { "minecraft:swift_sneak", nullptr },
+            { "minecraft:thorns", nullptr },
+            { "minecraft:unbreaking", nullptr },
+            { "minecraft:vanishing_curse", nullptr },
+            { "minecraft:wind_burst", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:jukebox_song",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:11", { } },
-            { "minecraft:13", { } },
-            { "minecraft:5", { } },
-            { "minecraft:blocks", { } },
-            { "minecraft:cat", { } },
-            { "minecraft:chirp", { } },
-            { "minecraft:creator", { } },
-            { "minecraft:creator_music_box", { } },
-            { "minecraft:far", { } },
-            { "minecraft:lava_chicken", { } },
-            { "minecraft:mall", { } },
-            { "minecraft:mellohi", { } },
-            { "minecraft:otherside", { } },
-            { "minecraft:pigstep", { } },
-            { "minecraft:precipice", { } },
-            { "minecraft:relic", { } },
-            { "minecraft:stal", { } },
-            { "minecraft:strad", { } },
-            { "minecraft:tears", { } },
-            { "minecraft:wait", { } },
-            { "minecraft:ward", { } },
+            { "minecraft:11", nullptr },
+            { "minecraft:13", nullptr },
+            { "minecraft:5", nullptr },
+            { "minecraft:blocks", nullptr },
+            { "minecraft:cat", nullptr },
+            { "minecraft:chirp", nullptr },
+            { "minecraft:creator", nullptr },
+            { "minecraft:creator_music_box", nullptr },
+            { "minecraft:far", nullptr },
+            { "minecraft:lava_chicken", nullptr },
+            { "minecraft:mall", nullptr },
+            { "minecraft:mellohi", nullptr },
+            { "minecraft:otherside", nullptr },
+            { "minecraft:pigstep", nullptr },
+            { "minecraft:precipice", nullptr },
+            { "minecraft:relic", nullptr },
+            { "minecraft:stal", nullptr },
+            { "minecraft:strad", nullptr },
+            { "minecraft:tears", nullptr },
+            { "minecraft:wait", nullptr },
+            { "minecraft:ward", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:instrument",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:admire_goat_horn", { } },
-            { "minecraft:call_goat_horn", { } },
-            { "minecraft:dream_goat_horn", { } },
-            { "minecraft:feel_goat_horn", { } },
-            { "minecraft:ponder_goat_horn", { } },
-            { "minecraft:seek_goat_horn", { } },
-            { "minecraft:sing_goat_horn", { } },
-            { "minecraft:yearn_goat_horn", { } },
+            { "minecraft:admire_goat_horn", nullptr },
+            { "minecraft:call_goat_horn", nullptr },
+            { "minecraft:dream_goat_horn", nullptr },
+            { "minecraft:feel_goat_horn", nullptr },
+            { "minecraft:ponder_goat_horn", nullptr },
+            { "minecraft:seek_goat_horn", nullptr },
+            { "minecraft:sing_goat_horn", nullptr },
+            { "minecraft:yearn_goat_horn", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:test_environment",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:default", { } },
+            { "minecraft:default", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:test_instance",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:always_pass", { } },
+            { "minecraft:always_pass", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:dialog",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:custom_options", { } },
-            { "minecraft:quick_actions", { } },
-            { "minecraft:server_links", { } },
+            { "minecraft:custom_options", nullptr },
+            { "minecraft:quick_actions", nullptr },
+            { "minecraft:server_links", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:world_clock",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:overworld", { } },
-            { "minecraft:the_end", { } },
+            { "minecraft:overworld", nullptr },
+            { "minecraft:the_end", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:timeline",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:day", { } },
-            { "minecraft:early_game", { } },
-            { "minecraft:moon", { } },
-            { "minecraft:villager_schedule", { } },
+            { "minecraft:day", nullptr },
+            { "minecraft:early_game", nullptr },
+            { "minecraft:moon", nullptr },
+            { "minecraft:villager_schedule", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:pig_sound_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:big", { } },
-            { "minecraft:classic", { } },
-            { "minecraft:mini", { } },
+            { "minecraft:big", nullptr },
+            { "minecraft:classic", nullptr },
+            { "minecraft:mini", nullptr },
         }) }
             .put(data_output_it));
 
     fwd(RegistryData { "minecraft:frog_variant",
         std::to_array<RegistryDataEntry>({
-            { "minecraft:cold", { } },
-            { "minecraft:temperate", { } },
-            { "minecraft:warm", { } },
+            { "minecraft:cold", nullptr },
+            { "minecraft:temperate", nullptr },
+            { "minecraft:warm", nullptr },
         }) }
             .put(data_output_it));
 

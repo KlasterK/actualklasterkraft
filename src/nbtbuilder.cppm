@@ -5,9 +5,9 @@ module;
 #include <string_view>
 export module actualklasterkraft.nbtbuilder;
 
-import actualklasterkraft.streambufops;
+import actualklasterkraft.protocolprimitives;
 
-export namespace nbtbuilderdefinitions
+export namespace nbttags
 {
     constexpr uint8_t End = 0;
     constexpr uint8_t I8 = 1;
@@ -32,20 +32,20 @@ export template <typename OutputIt> struct NBTBuilder
 
     template <std::integral T> NBTBuilder &operator<<(T i)
     {
-        it = protocoltypes::write_integer(it, i);
+        it = protocolprimitives::write_integer(it, i);
         return *this;
     }
 
     template <std::floating_point T> NBTBuilder &operator<<(T r)
     {
-        it = protocoltypes::write_real(it, r);
+        it = protocolprimitives::write_real(it, r);
         return *this;
     }
 
     NBTBuilder &operator<<(std::string_view sv)
     {
         assert(sv.size() < 65500);
-        it = protocoltypes::write_integer<uint16_t>(it, sv.size());
+        it = protocolprimitives::write_integer<uint16_t>(it, sv.size());
         it = std::copy(sv.begin(), sv.end(), it);
         return *this;
     }

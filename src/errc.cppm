@@ -8,6 +8,8 @@ export enum class MCProtocolError {
     UnexpectedPacketID,
     ExcessPacketData,
     UnsufficientPacketData,
+    NotEnoughBuffersToFitPacket,
+    MalformedPacketHeader,
     CorrelationIDMismatch,
 };
 
