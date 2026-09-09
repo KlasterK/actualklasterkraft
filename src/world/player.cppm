@@ -27,7 +27,7 @@ public:
     };
 
 public:
-    Player(asio::io_context &io)
+    Player(asio::any_io_executor io)
         : m_posrot_signal(io)
     {
     }
@@ -51,7 +51,7 @@ private:
 
     void spawn(PosRot posrot) { m_last_posrot = posrot; }
 
-    void kill() { m_last_posrot = { { }, 0, 0, 0, 0, 0, 0 } };
+    void kill() { m_last_posrot = { }; };
 
     friend class PlayerPool;
 };
@@ -63,7 +63,7 @@ class PlayerPool
     static_assert(N % 64 == 0);
 
 public:
-    PlayerPool(asio::io_context &io)
+    PlayerPool(asio::any_io_executor io)
         : m_players(
               [&]<size_t... Is>(std::index_sequence<Is...>)
               {
@@ -89,7 +89,7 @@ public:
 
     void kill(Player *player)
     {
-        assert(m_players.begin());
+        assert(m_players->begin());
         ;
     }
 
@@ -97,14 +97,3 @@ private:
     std::unique_ptr<std::array<Player, N>> m_players;
     std::unique_ptr<std::array<uint64_t, N / 64>> m_bitmaps;
 };
-
-struct S
-{
-    virtual ~S() = default;
-};
-
-struct F : S
-{
-};
-
-void foo() { (void)dynamic_cast<void *>((S *)nullptr); }

@@ -8,9 +8,8 @@ export enum class MCProtocolError {
     UnexpectedPacketID,
     ExcessPacketData,
     UnsufficientPacketData,
-    NotEnoughBuffersToFitPacket,
-    MalformedPacketHeader,
     CorrelationIDMismatch,
+    BufferTooSmallForPacket,
 };
 
 export class MCProtocolErrorCategory : public boost::system::error_category
@@ -44,8 +43,10 @@ public:
             return "Unsufficient packet data";
         case MCProtocolError::CorrelationIDMismatch:
             return "Correlation ID mismatch";
+        case MCProtocolError::BufferTooSmallForPacket:
+            return "Buffer is too small for the packet";
         default:
-            return std::format("Unknown 0x{:x}", value, value);
+            return std::format("Unknown 0x{:02X}", value);
         }
     }
 };

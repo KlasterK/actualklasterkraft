@@ -1,87 +1,82 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
+#include <boost/container/small_vector.hpp>
 #include <boost/system.hpp>
 #include <print>
 #include <string_view>
 export module actualklasterkraft.disconnecthelpers;
 
-import actualklasterkraft.session;
-import actualklasterkraft.streambufops;
-import actualklasterkraft.packetops;
-import actualklasterkraft.formatters;
 import actualklasterkraft.errc;
+import actualklasterkraft.formatters;
 import actualklasterkraft.nbtbuilder;
+import actualklasterkraft.packetops;
+import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.templates;
+import actualklasterkraft.transport;
 
-using namespace nbtbuilderdefinitions;
+using namespace protocolprimitives;
+using namespace std::literals;
+namespace asio = boost::asio;
+namespace sys = boost::system;
+using asio::ip::tcp;
+using PacketVec = boost::container::small_vector<uint8_t, 256>;
 
-boost::asio::awaitable<void> epilog(Session &session, std::string_view reason)
+boost::asio::awaitable<void> epilog(
+    Transport &transport, PacketVec vec, std::string reason)
 {
-    auto ec = co_await packetops::flush_packet(session);
+    auto ec = co_await packetops::put(transport, asio::buffer(vec));
     if (ec)
         std::println(
-            "\tCan't send disconnect message to the client (error code: {}; reason: {})",
-            ec, reason);
+            "Client {} was disconnected but reason could not be sent (error code: {}; reason: {})",
+            transport.remote_endpoint_copy, ec, reason);
     else
-        std::println("\tClient was disconnected with reason: {}", reason);
+        std::println("Client {} was disconnected with reason: {}",
+            transport.remote_endpoint_copy, reason);
 
-    session.get_socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both);
-    session.get_socket().close();
+    transport.socket.shutdown(tcp::socket::shutdown_both);
+    transport.socket.close();
 }
 
 export namespace disconnect
 {
-    auto login(Session &session, std::string_view reason)
+    auto login(Transport &transport, std::string reason)
     {
-        constexpr std::string_view json_left = "{\"text\":\"",
-                                   json_right = "\"}";
+        constexpr auto json_left = "{\"text\":\""sv, json_right = "\"}"sv;
 
-        session.get_streambuf().consume(session.get_streambuf().size());
-
-        session.get_streambuf().sputc(0x00);
-        streambufops::write_v32(session.get_streambuf(),
+        PacketVec vec;
+        vec.push_back(0x00); // packet ID
+        write_var<uint32_t>(std::back_inserter(vec),
             json_left.size() + reason.size() + json_right.size());
 
-        session.get_streambuf().sputn(json_left.data(), json_left.size());
+        std::ranges::copy(json_left, std::back_inserter(vec));
         for (char c : reason)
         {
-            if (c == '"')
-                session.get_streambuf().sputn("\\\"", 2);
-            else if (c == '\\')
-                session.get_streambuf().sputn("\\\\", 2);
-            else
-                session.get_streambuf().sputc(c);
+            if (c == '"' || c == '\\')
+                vec.push_back('\\');
+            vec.push_back(c);
         }
-        session.get_streambuf().sputn(json_right.data(), json_right.size());
+        std::ranges::copy(json_right, std::back_inserter(vec));
 
-        return epilog(session, reason);
+        return epilog(transport, std::move(vec), std::move(reason));
     }
 
-    auto configuration(Session &session, std::string_view reason)
+    auto configuration(Transport &transport, std::string reason)
     {
-        session.get_streambuf().consume(session.get_streambuf().size());
-
-        session.get_streambuf().sputc(0x02);
-        NBTBuilder(std::ostreambuf_iterator(&session.get_streambuf()))
-            << String << reason;
-
-        return epilog(session, reason);
+        PacketVec vec;
+        vec.push_back(0x02); // packet ID
+        NBTBuilder(std::back_inserter(vec)) << nbttags::String << reason;
+        return epilog(transport, std::move(vec), std::move(reason));
     }
 
-    auto play(Session &session, std::string_view reason)
+    auto play(Transport &transport, std::string reason)
     {
-        session.get_streambuf().consume(session.get_streambuf().size());
-
-        session.get_streambuf().sputc(0x20);
-        NBTBuilder(std::ostreambuf_iterator(&session.get_streambuf()))
-            << String << reason;
-
-        return epilog(session, reason);
+        PacketVec vec;
+        vec.push_back(0x20); // packet ID
+        NBTBuilder(std::back_inserter(vec)) << nbttags::String << reason;
+        return epilog(transport, std::move(vec), std::move(reason));
     }
 
-    std::string fmt_desync(
-        boost::system::error_code ec, std::string_view opt_ctx)
+    std::string fmt_desync(sys::error_code ec, std::string_view opt_ctx)
     {
         return opt_ctx.empty()
             ? std::format("Protocol Desync : {}", ec)

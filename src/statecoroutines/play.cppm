@@ -1,11 +1,8 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/asio/redirect_error.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
+#include <boost/system.hpp>
 #include <chrono>
 #include <cstdint>
-#include <functional>
 #include <print>
 #include <random>
 export module actualklasterkraft.statecoroutines.play;
@@ -13,20 +10,25 @@ export module actualklasterkraft.statecoroutines.play;
 import actualklasterkraft.bitfields;
 import actualklasterkraft.disconnecthelpers;
 import actualklasterkraft.errc;
-import actualklasterkraft.packetops;
-import actualklasterkraft.packetrouter;
-import actualklasterkraft.session;
-import actualklasterkraft.streambufops;
 import actualklasterkraft.formatters;
 import actualklasterkraft.nbtbuilder;
+import actualklasterkraft.packetops;
+import actualklasterkraft.packetrouter;
+import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.templates;
+import actualklasterkraft.transport;
 import actualklasterkraft.world.autogentest;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
+using asio::ip::tcp;
+using ISI = std::istreambuf_iterator<char>;
+using OSI = std::ostreambuf_iterator<char>;
+using namespace protocolprimitives;
 
 static std::mt19937 g_rng { std::random_device { }() };
 static std::uniform_int_distribution<uint64_t> g_u64_dist { };
-static std::uniform_int_distribution<int32_t> g_i32_dist { };
+static std::uniform_int_distribution<uint32_t> g_u32_dist { };
 
 class KeepAlive
 {
@@ -36,11 +38,12 @@ public:
 
 public:
     KeepAlive(
-        boost::intrusive_ptr<Session> session, PacketRouter &packet_router);
+        Transport &transport, asio::streambuf &sb, PacketRouter &packet_router);
     asio::awaitable<void> keepalive_loop();
 
 private:
-    boost::intrusive_ptr<Session> m_session;
+    Transport &m_transport;
+    asio::streambuf &m_streambuf;
     asio::steady_timer m_send_timer;
     PacketRouter::PacketChannel m_serverbound_keepalive_channel;
     PacketRouter::SubscriptionGuard m_subguard;
@@ -54,8 +57,8 @@ void put_login_packet(asio::streambuf &sbuf);
 
 export namespace statecoroutines
 {
-    asio::awaitable<void> play(boost::intrusive_ptr<Session> session,
-        std::string &&player_name, std::array<uint8_t, 16> &&player_uuid);
+    asio::awaitable<void> play(Transport transport, std::string player_name,
+        std::array<uint8_t, 16> player_uuid);
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -68,10 +71,11 @@ export namespace statecoroutines
 ///////////////////////////////////////////////////////////////////////
 
 KeepAlive::KeepAlive(
-    boost::intrusive_ptr<Session> session, PacketRouter &packet_router)
-    : m_session(session)
-    , m_send_timer(session->get_io(), std::chrono::seconds(1))
-    , m_serverbound_keepalive_channel(session->get_io())
+    Transport &transport, asio::streambuf &sb, PacketRouter &packet_router)
+    : m_transport(transport)
+    , m_streambuf(sb)
+    , m_send_timer(transport.socket.get_executor(), std::chrono::seconds(1))
+    , m_serverbound_keepalive_channel(transport.socket.get_executor())
     , m_subguard(packet_router.subscribe(
           m_serverbound_keepalive_channel, ServerboundPacketID))
 {
@@ -81,56 +85,54 @@ asio::awaitable<void> KeepAlive::keepalive_loop()
 {
     for (sys::error_code ec { };;)
     {
-        if (!m_session->get_socket().is_open())
+        if (!m_transport.socket.is_open())
             co_return;
 
         co_await m_send_timer.async_wait(asio::redirect_error(ec));
         if (ec)
             co_return co_await disconnect::play(
-                *m_session, disconnect::fmt_desync(ec, "Keep Alive timer"));
+                m_transport, disconnect::fmt_desync(ec, "Keep Alive timer"));
 
         if (m_timeout_counter++ > 2)
             co_return co_await disconnect::play(
-                *m_session, "Timeout (powered by ActualKlasterKraft)");
+                m_transport, "Timeout (powered by ActualKlasterKraft)");
 
-        m_session->get_streambuf().sputc(ClientboundPacketID);
+        std::array<uint8_t, 9> buf;
+        buf[0] = ClientboundPacketID;
         uint64_t payload = g_u64_dist(g_rng);
-        streambufops::write_integer<uint64_t>(
-            m_session->get_streambuf(), payload);
+        write_integer<uint64_t>(buf.begin() + 1, payload);
 
-        ec = co_await packetops::flush_packet(*m_session);
+        ec = co_await packetops::put(m_transport, asio::buffer(buf));
         if (ec)
-            co_return co_await disconnect::play(*m_session,
-                disconnect::fmt_desync(ec, "Clienbound Keep Alive"));
+            co_return co_await disconnect::play(m_transport,
+                disconnect::fmt_desync(ec, "Clientbound Keep Alive"));
 
         for (uint64_t &active_payload : m_active_payloads)
         {
             if (active_payload == 0)
             {
                 active_payload = payload;
-                goto finish;
+                goto payload_placed;
             }
         }
 
         // No free slots for payloads, then replace the first
         m_active_payloads[0] = payload;
 
-    finish:
+    payload_placed:
         co_await m_serverbound_keepalive_channel.async_receive(
             asio::redirect_error(ec));
         if (ec)
-            co_return co_await disconnect::play(*m_session,
+            co_return co_await disconnect::play(m_transport,
                 disconnect::fmt_desync(ec, "Serverbound Keep Alive"));
 
-        auto got_payload = streambufops::read_integer<uint64_t>(
-            m_session->get_streambuf(), ec);
-        if (got_payload != payload)
-            co_return co_await disconnect::play(*m_session,
-                disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
-                    "Serverbound Keep Alive"));
-
-        if (m_session->get_streambuf().size() > 0)
-            co_return co_await disconnect::play(*m_session,
+        auto got_payload = InlineTie(TieReturn, std::ignore, ec)
+            = read_integer<uint64_t>(ISI(&m_streambuf), ISI());
+        if (ec)
+            co_return co_await disconnect::play(m_transport,
+                disconnect::fmt_desync(ec, "Serverbound Keep Alive"));
+        if (m_streambuf.size() > 0)
+            co_return co_await disconnect::play(m_transport,
                 disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
                     "Serverbound Keep Alive"));
 
@@ -140,189 +142,199 @@ asio::awaitable<void> KeepAlive::keepalive_loop()
             {
                 active_payload = 0;
                 m_timeout_counter = 0;
-                break;
+                goto payload_matched;
             }
         }
+        co_return co_await disconnect::play(m_transport,
+            disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
+                "Serverbound Keep Alive"));
+
+    payload_matched:
+        continue;
     }
 }
 
-void put_login_packet(asio::streambuf &sbuf)
+void put_login_packet(asio::streambuf &sb)
 {
     // Values are mostly copied from Notchian server
     // id
-    sbuf.sputc(0x31);
+    sb.sputc(0x31);
     // Entity ID
-    streambufops::write_integer<int32_t>(sbuf, 1);
+    write_integer<int32_t>(OSI(&sb), 1);
     // Is hardcore
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Present dimension names
-    sbuf.sputc(1); // count
-    streambufops::write_string(sbuf, "minecraft:overworld");
+    sb.sputc(1); // count
+    write_string(OSI(&sb), "minecraft:overworld");
     // Max players
-    streambufops::write_v32(sbuf, 20);
+    write_var<uint32_t>(OSI(&sb), 20);
     // View distance
-    sbuf.sputc(10);
+    sb.sputc(10);
     // Simulation distance
-    sbuf.sputc(10);
+    sb.sputc(10);
     // Reduced debug info
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Enable respawn screen
-    sbuf.sputc(1);
+    sb.sputc(1);
     // Do limited crafting
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Dimension type player will be spawned into
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Dimension name player will be spawned into
-    streambufops::write_string(sbuf, "minecraft:overworld");
+    write_string(OSI(&sb), "minecraft:overworld");
     // First 8 bytes of seed's SHA-256
-    streambufops::write_integer<uint64_t>(sbuf, 123456789);
+    write_integer<uint64_t>(OSI(&sb), 123456789);
     // Gamemode
-    sbuf.sputc(1); // Creative
+    sb.sputc(1); // Creative
     // Previous gamemode
-    sbuf.sputc(0xFF); // Undefined
+    sb.sputc(0xFF); // Undefined
     // Is debug mode world (used to test resourcepacks, not our case)
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Is superflat world (affects rendering)
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Has death location (since disabled, death dimension name and death location fields are not present)
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Portal cooldown in ticks
-    sbuf.sputc(0);
+    sb.sputc(0);
     // Sea level
-    sbuf.sputc(63);
+    sb.sputc(63);
     // Enforce secure chat
-    sbuf.sputc(0);
+    sb.sputc(0);
 }
 
-asio::awaitable<void> statecoroutines::play(
-    boost::intrusive_ptr<Session> session, std::string &&player_name,
-    std::array<uint8_t, 16> &&player_uuid)
+asio::awaitable<void> statecoroutines::play(Transport transport,
+    std::string player_name, std::array<uint8_t, 16> player_uuid)
 {
-    std::println("\tstate_play");
-    sys::error_code ec { };
+    asio::streambuf streambuf;
 
-    PacketRouter packet_router(*session,
-        [session](sys::error_code ec)
+    PacketRouter packet_router(transport, streambuf,
+        [&](sys::error_code ec)
         {
-            asio::co_spawn(session->get_io(),
+            asio::co_spawn(transport.socket.get_executor(),
                 disconnect::play(
-                    *session, disconnect::fmt_desync(ec, "PacketRouter")),
+                    transport, disconnect::fmt_desync(ec, "PacketRouter")),
                 asio::detached);
         });
     packet_router.begin_receiving();
 
-    KeepAlive keep_alive { session, packet_router };
-    asio::co_spawn(
-        session->get_io(), keep_alive.keepalive_loop(), asio::detached);
+    KeepAlive keep_alive { transport, streambuf, packet_router };
+    asio::co_spawn(transport.socket.get_executor(), keep_alive.keepalive_loop(),
+        asio::detached);
 
     // Login (world state essentially)
-    put_login_packet(session->get_streambuf());
-    ec = co_await packetops::flush_packet(*session);
+    put_login_packet(streambuf);
+    auto ec = co_await packetops::put(transport, streambuf);
     if (ec)
         co_return co_await disconnect::play(
-            *session, disconnect::fmt_desync(ec, "Login the packet"));
+            transport, disconnect::fmt_desync(ec, "Login the packet"));
 
     // Synchronise Player Position
-    int32_t teleport_id = g_i32_dist(g_rng);
+    uint32_t teleport_id = g_u32_dist(g_rng);
 
-    session->get_streambuf().sputc(0x48); // packet id
-    streambufops::write_v32(session->get_streambuf(), teleport_id);
+    streambuf.sputc(0x48); // packet id
+    write_var<uint32_t>(OSI(&streambuf), teleport_id);
     // position, velocity
     // TODO: client somewhy ignores sent values and places the player at (0; 0; 0)
     for (double value : { 8.0, 82.0, 8.0, 0.0, 0.0, 0.0 })
-        streambufops::write_real(session->get_streambuf(), value);
+        write_real(OSI(&streambuf), value);
     // yaw, pitch
     for (float value : { 0.f, 0.f }) // looking towards positive Z
-        streambufops::write_real(session->get_streambuf(), value);
+        write_real(OSI(&streambuf), value);
     TeleportFlags::IntT teleport_flags { 0 };
-    streambufops::write_integer(session->get_streambuf(), teleport_flags);
+    write_integer(OSI(&streambuf), teleport_flags);
 
-    ec = co_await packetops::flush_packet(*session);
+    ec = co_await packetops::put(transport, streambuf);
     if (ec)
-        co_return co_await disconnect::play(*session,
+        co_return co_await disconnect::play(transport,
             disconnect::fmt_desync(ec, "Synchronise Player Position"));
 
     // Await for Confirm Teleportation
     {
-        PacketRouter::PacketChannel channel { session->get_io() };
+        PacketRouter::PacketChannel channel { transport.socket.get_executor() };
         auto sub = packet_router.subscribe(channel, 0x0);
 
         co_await channel.async_receive(asio::redirect_error(ec));
         if (ec)
             co_return co_await disconnect::play(
-                *session, disconnect::fmt_desync(ec, "Confirm Teleportation"));
+                transport, disconnect::fmt_desync(ec, "Confirm Teleportation"));
 
-        int32_t got_teleport_id
-            = streambufops::read_v32(session->get_streambuf(), ec);
+        uint32_t got_teleport_id = InlineTie(TieReturn, std::ignore, ec)
+            = read_var<uint32_t>(ISI(&streambuf), ISI());
         if (ec)
             co_return co_await disconnect::play(
-                *session, disconnect::fmt_desync(ec, "Confirm Teleportation"));
+                transport, disconnect::fmt_desync(ec, "Confirm Teleportation"));
 
         if (got_teleport_id != teleport_id)
-            co_return co_await disconnect::play(*session,
+            co_return co_await disconnect::play(transport,
                 disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
                     "Confirm Teleportation"));
 
-        if (session->get_streambuf().size() > 0)
-            co_return co_await disconnect::play(*session,
+        if (streambuf.size() > 0)
+            co_return co_await disconnect::play(transport,
                 disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
                     "Confirm Teleportation"));
     }
 
     // send Game Event 'Start waiting for level chunks'
-    session->get_streambuf().sputc(0x26); // packet id
-    session->get_streambuf().sputc(13); // event id
-    streambufops::write_real(session->get_streambuf(), 0.f);
+    streambuf.sputc(0x26); // packet id
+    streambuf.sputc(13); // event id
+    write_real(OSI(&streambuf), 0.f);
 
-    ec = co_await packetops::flush_packet(*session);
+    std::println("\t{} joined the game", player_name);
+
+    ec = co_await packetops::put(transport, streambuf);
     if (ec)
         co_return co_await disconnect::play(
-            *session, disconnect::fmt_desync(ec, "Game Event"));
+            transport, disconnect::fmt_desync(ec, "Game Event"));
 
     // send Set Center Chunk
-    session->get_streambuf().sputc(0x5E); // packet id
-    streambufops::write_v32(session->get_streambuf(), 0); // X
-    streambufops::write_v32(session->get_streambuf(), 0); // Z
+    streambuf.sputc(0x5E); // packet id
+    write_var<int32_t>(OSI(&streambuf), 0); // X
+    write_var<int32_t>(OSI(&streambuf), 0); // Z
 
-    ec = co_await packetops::flush_packet(*session);
+    ec = co_await packetops::put(transport, streambuf);
     if (ec)
         co_return co_await disconnect::play(
-            *session, disconnect::fmt_desync(ec, "Set Center Chunk"));
+            transport, disconnect::fmt_desync(ec, "Set Center Chunk"));
 
-    chunkgen::put_single_valued_sectioned_chunk(session->get_streambuf(), 0, 0,
-        std::array { chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-            chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-            chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-            chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-            chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air });
+    constexpr std::array center_block_states { chunkgen::GrassBlock,
+        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+        chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+        chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+        chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
+        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
+        chunkgen::GrassBlock, chunkgen::Air };
 
-    ec = co_await packetops::flush_packet(*session);
-    if (ec)
-        co_return co_await disconnect::play(*session,
-            disconnect::fmt_desync(ec, "Update Chunk and Light Data"));
-
-    for (auto xz :
-        std::to_array<std::array<int32_t, 2>>({ { 0, 1 }, { 1, 1 }, { 1, 0 },
-            { 1, -1 }, { 0, -1 }, { -1, -1 }, { -1, 0 }, { -1, 1 } }))
+    for (int32_t x = -1; x < 2; ++x)
     {
-        chunkgen::put_empty_chunk(session->get_streambuf(), xz[0], xz[1]);
+        for (int32_t z = -1; z < 2; ++z)
+        {
+            const auto &block_states = x == 0 && z == 0
+                ? center_block_states
+                : chunkgen::AirBlockStates;
+            auto [buf1, buf2]
+                = chunkgen::single_valued_sectioned_chunk(x, z, block_states);
 
-        ec = co_await packetops::flush_packet(*session);
-        if (ec)
-            co_return co_await disconnect::play(*session,
-                disconnect::fmt_desync(ec, "Update Chunk and Light Data"));
+            ec = co_await packetops::put_va(transport, buf1, buf2);
+            if (ec)
+                co_return co_await disconnect::play(transport,
+                    disconnect::fmt_desync(ec, "Update Chunk and Light Data"));
+        }
     }
 
     // Do nothing until the socket closes
-    asio::steady_timer timer(session->get_io(), std::chrono::seconds(1));
-    for (;;)
+    asio::steady_timer timer(
+        transport.socket.get_executor(), std::chrono::seconds(1));
+    while (transport.socket.is_open())
     {
         co_await timer.async_wait(asio::redirect_error(ec));
         if (ec)
             co_return co_await disconnect::play(
-                *session, disconnect::fmt_desync(ec, "timer"));
+                transport, disconnect::fmt_desync(ec, "timer"));
     }
+
+    std::println("\t{} left the game", player_name);
+    std::println("Connection {} closed", transport.remote_endpoint_copy);
 }

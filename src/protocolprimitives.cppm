@@ -55,7 +55,7 @@ export namespace protocolprimitives
     }
 
     template <Integral3264 T, OutputIt8 It>
-    constexpr It write_var(It it, T value)
+    constexpr It write_var(It it, std::type_identity_t<T> value)
     {
         for (;;)
         {

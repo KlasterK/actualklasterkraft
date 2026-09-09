@@ -6,69 +6,78 @@ module;
 export module actualklasterkraft.statecoroutines.handshake;
 
 import actualklasterkraft.packetops;
-import actualklasterkraft.session;
+import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.formatters;
+import actualklasterkraft.templates;
+import actualklasterkraft.transport;
 import actualklasterkraft.statecoroutines.status;
 import actualklasterkraft.statecoroutines.login;
-import actualklasterkraft.streambufops;
 
 namespace asio = boost::asio;
-namespace sys = boost::system;
+using asio::ip::tcp;
+using namespace protocolprimitives;
 
 export namespace statecoroutines
 {
-    asio::awaitable<void> handshake(boost::intrusive_ptr<Session> session)
+    asio::awaitable<void> handshake(Transport transport)
     {
-        sys::error_code ec { };
-        std::println("\tstate_handshake");
-
         auto fail = [&]
         {
-            std::println("\tProtocol desynced. Is it a Minecraft client?");
-            session->get_socket().shutdown(
-                asio::ip::tcp::socket::shutdown_both);
-            session->get_socket().close();
+            std::println(
+                "Connection {} tried to connect but could not pass Handshake stage. Is it a Minecraft client?",
+                transport.remote_endpoint_copy);
+            transport.socket.shutdown(tcp::socket::shutdown_both);
+            transport.socket.close();
         };
 
-        if (co_await packetops::await_for_packet(*session))
-            co_return fail();
+        std::array<uint8_t, 512> buf;
+        auto it = buf.begin();
 
-        // Packet ID
-        if (session->get_streambuf().sbumpc() != 0x00)
+        auto [ec, packet_size]
+            = co_await packetops::get(transport, asio::buffer(buf));
+        if (ec)
+            co_return fail();
+        auto end = it + packet_size;
+
+        auto packet_id = InlineTie(TieReturn, it, ec)
+            = read_var<uint32_t>(it, end);
+        if (ec || packet_id != 0x00)
             co_return fail();
 
         // Protocol Version (won't check it for now)
-        int32_t proto_version
-            = streambufops::read_v32(session->get_streambuf(), ec);
+        std::tie(std::ignore, it, ec) = read_var<int32_t>(it, end);
         if (ec)
             co_return fail();
-        std::println("\tProtocol Version: {}", proto_version);
 
         // Server Address length
-        int32_t server_addr_len
-            = streambufops::read_v32(session->get_streambuf(), ec);
-        if (ec || server_addr_len < 1 || server_addr_len > 255)
+        auto server_addr_len = InlineTie(TieReturn, it, ec)
+            = read_var<uint32_t>(it, end);
+        if (ec || server_addr_len > 255)
             co_return fail();
 
         // Skip the following string and next field which is u16 Server Port
-        session->get_streambuf().consume(server_addr_len + 2);
+        it += server_addr_len + sizeof(uint16_t);
+        if (it >= end)
+            co_return fail();
 
-        int32_t intent = streambufops::read_v32(session->get_streambuf(), ec);
+        int32_t intent = InlineTie(TieReturn, it, ec)
+            = read_var<uint32_t>(it, end);
         if (ec)
             co_return fail();
 
         asio::awaitable<void> next_coro { };
         if (intent == 1) // Status
-            next_coro = statecoroutines::status(session);
+            next_coro = statecoroutines::status(std::move(transport));
         else if (intent == 2 || intent == 3) // Login or Transfer
-            next_coro = statecoroutines::login(session, intent == 3);
+            next_coro
+                = statecoroutines::login(std::move(transport), intent == 3);
         else
             co_return fail();
 
-        if (session->get_streambuf().size() > 0)
+        if (it != end)
             co_return fail();
 
-        asio::co_spawn(session->get_io(), std::move(next_coro),
-            [session](std::exception_ptr exc_ptr)
-            { session->handle_coroutine_finished(exc_ptr); });
+        asio::co_spawn(transport.socket.get_executor(), std::move(next_coro),
+            asio::detached);
     }
 }

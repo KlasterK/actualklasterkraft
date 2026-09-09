@@ -1,28 +1,28 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/asio/experimental/channel.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <boost/system.hpp>
 #include <exception>
-#include <functional>
 #include <print>
 #include <stdexcept>
 export module actualklasterkraft.packetrouter;
 
 import actualklasterkraft.packetops;
-import actualklasterkraft.session;
-import actualklasterkraft.streambufops;
+import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.templates;
+import actualklasterkraft.transport;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
 namespace asiox = asio::experimental;
+using asio::ip::tcp;
+using namespace protocolprimitives;
 
 export class PacketRouter
 {
 public:
     using PacketChannel = asiox::channel<void(sys::error_code)>;
-    static constexpr int32_t MaxPacketID = 128;
+    static constexpr uint32_t MaxPacketID = 128;
 
     class SubscriptionGuard
     {
@@ -70,17 +70,18 @@ public:
     };
 
 public:
-    PacketRouter(Session &session,
-        std::move_only_function<void(sys::error_code)> on_error)
-        : m_session(session)
+    PacketRouter(Transport &transport, asio::streambuf &sb,
+        asio::any_completion_handler<void(sys::error_code)> on_error)
+        : m_transport(transport)
+        , m_streambuf(sb)
         , m_on_error(std::move(on_error))
     {
     }
 
     void begin_receiving()
     {
-        asio::co_spawn(m_session.get_io(),
-            packetops::await_for_packet(m_session),
+        asio::co_spawn(m_transport.socket.get_executor(),
+            packetops::get(m_transport, m_streambuf),
             [this](std::exception_ptr exc_ptr, sys::error_code ec)
             {
                 if (exc_ptr)
@@ -89,30 +90,32 @@ public:
                 if (ec)
                     return m_on_error(ec);
 
-                int32_t id
-                    = streambufops::read_v32(m_session.get_streambuf(), ec);
+                auto packet_id = InlineTie(TieReturn, std::ignore, ec)
+                    = read_var<uint32_t>(
+                        std::istreambuf_iterator<char>(&m_streambuf),
+                        std::istreambuf_iterator<char>());
                 if (ec)
                     return m_on_error(ec);
 
-                if (id < 0 || id >= MaxPacketID)
+                if (packet_id >= MaxPacketID)
                     throw std::logic_error(
                         "PacketRouter::begin_receiving: received packet ID not in valid range");
 
-                if (m_subscribers[id] == nullptr)
+                if (m_subscribers[packet_id] == nullptr)
                 {
                     std::println(
-                        "\tPacketRouter::begin_receiving: received packet with ID 0x{:x} without any subscribers",
-                        id);
+                        "\tPacketRouter::begin_receiving: received packet with ID 0x{:02X} without any subscribers",
+                        packet_id);
 
-                    m_session.get_streambuf().consume(
-                        m_session.get_streambuf().size());
+                    m_streambuf.consume(m_streambuf.size());
                 }
                 else
                 {
-                    if (!m_subscribers[id]->try_send(sys::error_code { }))
+                    if (!m_subscribers[packet_id]->try_send(
+                            sys::error_code { }))
                         throw std::runtime_error(std::format(
-                            "PacketRouter::begin_receiving: sending to subscriber channel failed (packet ID 0x{:x})",
-                            id));
+                            "PacketRouter::begin_receiving: sending to subscriber channel failed (packet ID 0x{:02X})",
+                            packet_id));
                 }
 
                 begin_receiving();
@@ -122,7 +125,7 @@ public:
     [[nodiscard]] SubscriptionGuard subscribe(
         PacketChannel &channel, uint32_t packet_id)
     {
-        if (packet_id < 0 || packet_id >= MaxPacketID)
+        if (packet_id >= MaxPacketID)
             throw std::logic_error(
                 "PacketRouter::subscribe: packet_id not in valid range");
 
@@ -135,7 +138,8 @@ public:
     }
 
 private:
-    Session &m_session;
-    std::move_only_function<void(sys::error_code)> m_on_error;
+    Transport &m_transport;
+    asio::streambuf &m_streambuf;
+    asio::any_completion_handler<void(sys::error_code)> m_on_error;
     std::array<PacketChannel *, MaxPacketID> m_subscribers { };
 };

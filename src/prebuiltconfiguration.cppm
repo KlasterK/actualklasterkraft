@@ -1,7 +1,7 @@
 module;
 #include <array>
 #include <cstdint>
-#include <string>
+#include <string_view>
 #include <tuple>
 export module actualklasterkraft.prebuiltconfiguration;
 
@@ -88,7 +88,7 @@ template <size_t NEntries> struct Tag
         it = write_var<uint32_t>(it, entries.size());
         for (int32_t entry : entries)
         {
-            it = write_var(it, entry);
+            it = write_var<int32_t>(it, entry);
         }
     }
 };
@@ -130,7 +130,7 @@ template <typename... InstantiatedTaggedRegistries>
 UpdateTags(std::tuple<InstantiatedTaggedRegistries...>)
     -> UpdateTags<InstantiatedTaggedRegistries...>;
 
-export constexpr ConfigurationPackets PrebuiltConfigurationStatePackets
+export constexpr ConfigurationPackets PrebuiltConfigurationStagePackets
     = [] consteval
 {
     ConfigurationPackets cp { };
