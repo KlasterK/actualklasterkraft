@@ -1,6 +1,6 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/asio/any_io_executor.hpp>
+#include <concepts>
 #include <tuple>
 #include <vector>
 export module actualklasterkraft.pubsub;
@@ -9,7 +9,10 @@ namespace asio = boost::asio;
 
 export template <typename Signature> class WeakSignal;
 
-export template <typename... Args> class WeakSignal<void(Args...)>
+export template <typename... Args>
+    requires(
+        (std::is_object_v<Args> && std::default_initializable<Args>) && ...)
+class WeakSignal<void(Args...)>
 {
 public:
     WeakSignal(asio::any_io_executor io)
@@ -29,8 +32,9 @@ public:
             if (awaiter == nullptr)
                 continue;
 
-            asio::post(m_io, [aw = std::move(awaiter), args...] mutable
-                { std::move(aw)(args...); });
+            asio::post(m_io,
+                [aw = std::move(awaiter), ... args = std::move(args)] mutable
+                { std::move(aw)(std::move(args)...); });
         }
         m_awaiters.clear();
     }
@@ -42,32 +46,34 @@ public:
             {
                 auto &awaiter
                     = m_awaiters.emplace_back(std::move(completion_handler));
+
                 auto slot = asio::get_associated_cancellation_slot(awaiter);
-                if (slot.is_connected())
-                {
-                    slot.assign(
-                        [this, idx = m_awaiters.size() - 1](
-                            asio::cancellation_type type)
-                        {
-                            if (type == asio::cancellation_type::none)
-                                return;
+                if (!slot.is_connected())
+                    return;
 
-                            asio::post(m_io,
-                                [aw = std::move(m_awaiters[idx])] mutable
-                                {
-                                    std::tuple<Args...> args;
-                                    std::get<0>(args)
-                                        = asio::error::operation_aborted;
+                slot.assign(
+                    [this, idx = m_awaiters.size() - 1](
+                        asio::cancellation_type type)
+                    {
+                        if (!type)
+                            return;
 
-                                    std::apply([&](auto &&...args)
-                                        { std::move(aw)(args...); }, args);
-                                });
+                        asio::post(m_io,
+                            [aw = std::move(m_awaiters[idx])] mutable
+                            {
+                                std::tuple<Args...> args;
+                                std::get<0>(args)
+                                    = asio::error::operation_aborted;
 
-                            m_awaiters[idx] = nullptr;
-                        });
-                }
+                                std::apply([&](auto &&...args)
+                                    { std::move(aw)(std::move(args)...); },
+                                    args);
+                            });
+
+                        m_awaiters[idx] = nullptr;
+                    });
             },
-            token);
+            std::forward<CompletionToken>(token));
     }
 
 private:

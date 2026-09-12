@@ -129,7 +129,7 @@ public:
     /// In particular, these transforms can be applied:
     /// - `Vector2(r, phi) == Vector2(-r, phi + 180_deg)`
     /// - `Vector2(r, phi) == Vector2(r, phi + n * 360_deg)`
-    Vec2(T r, Angle phi)
+    constexpr Vec2(T r, Angle phi)
         : x(r * static_cast<T>(std::cos(phi.as_radians())))
         , z(r * static_cast<T>(std::sin(phi.as_radians())))
     {
@@ -137,7 +137,7 @@ public:
             "Vector2::Vector2(T, Angle) is only supported for floating point types");
     }
 
-    [[nodiscard]] T length() const
+    [[nodiscard]] constexpr T length() const
     {
         static_assert(std::is_floating_point_v<T>,
             "Vector2::length() is only supported for floating point types");
@@ -148,7 +148,7 @@ public:
 
     [[nodiscard]] constexpr T length_squared() const { return dot(*this); }
 
-    [[nodiscard]] Vec2 normalized() const
+    [[nodiscard]] constexpr Vec2 normalized() const
     {
         static_assert(std::is_floating_point_v<T>,
             "Vector2::normalized() is only supported for floating point types");
@@ -164,7 +164,7 @@ public:
     /// or negative direction, until it has the same direction as `rhs`.
     /// The result has a sign and lies in the range [-180, 180) degrees.
     /// \pre Neither `*this` nor `rhs` is a zero vector.
-    [[nodiscard]] Angle angle_to(Vec2 rhs) const
+    [[nodiscard]] constexpr Angle angle_to(Vec2 rhs) const
     {
         static_assert(std::is_floating_point_v<T>,
             "Vector2::angleTo() is only supported for floating point types");
@@ -183,7 +183,7 @@ public:
     ///
     /// \return Angle in the range [-180, 180) degrees.
     /// \pre This vector is no zero vector.
-    [[nodiscard]] Angle angle() const
+    [[nodiscard]] constexpr Angle angle() const
     {
         static_assert(std::is_floating_point_v<T>,
             "Vector2::angle() is only supported for floating point types");
@@ -256,7 +256,7 @@ public:
         return Vec3<U>(static_cast<U>(x), static_cast<U>(y), static_cast<U>(z));
     }
 
-    [[nodiscard]] T length() const
+    [[nodiscard]] constexpr T length() const
     {
         static_assert(std::is_floating_point_v<T>,
             "Vector3::length() is only supported for floating point types");
@@ -267,7 +267,7 @@ public:
 
     [[nodiscard]] constexpr T length_squared() const { return dot(*this); }
 
-    [[nodiscard]] Vec3 normalized() const
+    [[nodiscard]] constexpr Vec3 normalized() const
     {
         static_assert(std::is_floating_point_v<T>,
             "Vector3::normalized() is only supported for floating point types");
@@ -468,6 +468,7 @@ export {
 
         return left;
     }
+
     template <typename T>
     [[nodiscard]] constexpr Vec2<T> operator/(Vec2<T> left, T right)
     {
