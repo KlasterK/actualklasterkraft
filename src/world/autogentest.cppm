@@ -5,6 +5,7 @@ module;
 export module actualklasterkraft.world.autogentest;
 
 import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.world.math;
 
 using namespace protocolprimitives;
 
@@ -46,16 +47,16 @@ export namespace chunkgen
         return it;
     }
 
-    auto single_valued_sectioned_chunk(int32_t chunk_x, int32_t chunk_z,
-        const std::array<int32_t, 24> &block_states)
+    auto single_valued_sectioned_chunk(
+        Vec2<int32_t> chunk_pos, const std::array<int32_t, 24> &block_states)
     {
         boost::container::static_vector<uint8_t, 32> buf1;
         auto it1 = std::back_inserter(buf1);
 
         *it1++ = 0x2D; // id Chunk Data and Update Light
 
-        it1 = write_integer(it1, chunk_x);
-        it1 = write_integer(it1, chunk_z);
+        it1 = write_integer(it1, chunk_pos.x);
+        it1 = write_integer(it1, chunk_pos.z);
 
         // Heightmaps (empty)
         it1 = write_var<uint32_t>(it1, 0);

@@ -303,6 +303,9 @@ public:
 
     constexpr std::array<T, 3> to_array() const { return { x, y, z }; }
 
+    constexpr auto to_ptr_array() const { return std::array { &x, &y, &z }; }
+    constexpr auto to_ptr_array() { return std::array { &x, &y, &z }; }
+
     T x { };
     T y { };
     T z { };

@@ -16,7 +16,7 @@ int main()
     std::println("Hello World!");
 
     boost::asio::io_context io;
-    emplace_global_player_pool(io);
+    emplace_global_player_pool(io.get_executor());
 
     Acceptor acceptor(io.get_executor(), 25565);
     acceptor.start();

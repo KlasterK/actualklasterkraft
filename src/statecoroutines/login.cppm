@@ -162,7 +162,7 @@ export namespace statecoroutines
             }
         }
 
-        std::println("Connection {} is joining as {}",
+        std::println("Client {} is joining as {}",
             transport.remote_endpoint_copy, player_name);
         asio::co_spawn(transport.socket.get_executor(),
             statecoroutines::configuration(std::move(transport),

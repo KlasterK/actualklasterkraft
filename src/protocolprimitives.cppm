@@ -10,6 +10,7 @@ module;
 export module actualklasterkraft.protocolprimitives;
 
 import actualklasterkraft.errc;
+import actualklasterkraft.world.math;
 
 namespace sys = boost::system;
 namespace en = boost::endian;
@@ -124,5 +125,30 @@ export namespace protocolprimitives
         it = write_var<uint32_t>(it, string.size());
         return std::transform(string.begin(), string.end(), it,
             [](auto c) { return uint8_t(c); });
+    }
+
+    template <std::floating_point T, OutputIt8 It>
+    constexpr It write_xyz(It it, Vec3<T> value)
+    {
+        it = write_real(it, value.x);
+        it = write_real(it, value.y);
+        it = write_real(it, value.z);
+        return it;
+    }
+
+    template <std::floating_point T, OutputIt8 It>
+    constexpr It write_xz(It it, Vec2<T> value)
+    {
+        it = write_real(it, value.x);
+        it = write_real(it, value.z);
+        return it;
+    }
+
+    template <OutputIt8 It> constexpr It write_angle256(It it, Angle value)
+    {
+        constexpr float tau = std::numbers::pi_v<float> * 2;
+        *it++ = static_cast<uint8_t>(
+            value.wrap_unsigned().as_radians() / tau * 256);
+        return it;
     }
 }
