@@ -1,8 +1,10 @@
 module;
 #include <boost/asio.hpp>
+#include <boost/container/small_vector.hpp>
 #include <boost/json.hpp>
 #include <boost/system.hpp>
 #include <print>
+#include <ranges>
 export module actualklasterkraft.statecoroutines.status;
 
 import actualklasterkraft.errc;
@@ -11,42 +13,46 @@ import actualklasterkraft.packetops;
 import actualklasterkraft.protocolprimitives;
 import actualklasterkraft.templates;
 import actualklasterkraft.transport;
+import actualklasterkraft.world.player;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
 using asio::ip::tcp;
 using namespace protocolprimitives;
 
-const boost::json::value StatusResponse {
-    { "version",
-        {
-            { "name", "26.1.2" },
-            { "protocol", 775 },
-        } },
-    { "players",
-        {
-            { "max", 20 },
-            { "online", 1 },
-            { "sample", boost::json::array { } },
-        } },
-    { "description",
-        {
-            { "text", "An ActualKlasterKraft Server" },
-        } },
-    { "enforcesSecureChat", false },
-};
-
-const auto SerializedStatusResponsePacket = []
+std::string generate_status_response_json()
 {
-    auto json = boost::json::serialize(StatusResponse);
-    std::vector<uint8_t> vec;
-
-    vec.push_back(0x00); // packet ID
-    write_var<uint32_t>(std::back_inserter(vec), json.size());
-    std::copy(json.begin(), json.end(), std::back_inserter(vec));
-
-    return vec;
-}();
+    return boost::json::serialize(boost::json::value {
+        { "version",
+            {
+                { "name", "26.1.2" },
+                { "protocol", 775 },
+            } },
+        { "players",
+            {
+                { "max", get_global_player_pool().max_players() },
+                { "online", get_global_player_pool().count_living_players() },
+                { "sample",
+                    get_global_player_pool().living_players()
+                        | std::views::take(20)
+                        | std::views::transform(
+                            [](Player &p)
+                            {
+                                return boost::json::value { { "name",
+                                                                p.get_name() },
+                                    { "id",
+                                        std::format("{}",
+                                            FormatAsUUID { p.get_uuid() }) } };
+                            })
+                        | std::ranges::to<boost::json::array>() },
+            } },
+        { "description",
+            {
+                { "text", "An ActualKlasterKraft Server" },
+            } },
+        { "enforcesSecureChat", false },
+    });
+}
 
 export namespace statecoroutines
 {
@@ -75,10 +81,15 @@ export namespace statecoroutines
         if (buf[0] != 0x00) // Status Request
             co_return fail(MCProtocolError::UnexpectedPacketID);
 
-        ec = co_await packetops::put(
-            transport, asio::buffer(SerializedStatusResponsePacket));
-        if (ec)
-            co_return fail(ec);
+        // Status Response packet ID matches
+        {
+            std::string json = generate_status_response_json();
+            auto end = write_var<uint32_t>(buf.data() + 1, json.size());
+            ec = co_await packetops::put_va(transport,
+                asio::buffer(buf.data(), end - buf.data()), asio::buffer(json));
+            if (ec)
+                co_return fail(ec);
+        }
 
         std::tie(ec, packet_size)
             = co_await packetops::get(transport, asio::buffer(buf));
