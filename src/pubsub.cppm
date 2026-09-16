@@ -7,36 +7,37 @@ export module actualklasterkraft.pubsub;
 
 namespace asio = boost::asio;
 
-export template <typename Signature> class WeakSignal;
+export template <typename Signature> class Signal;
 
 export template <typename... Args>
     requires(
         (std::is_object_v<Args> && std::default_initializable<Args>) && ...)
-class WeakSignal<void(Args...)>
+class Signal<void(Args...)>
 {
 public:
-    WeakSignal(asio::any_io_executor io)
+    Signal(asio::any_io_executor io)
         : m_io(io)
     {
     }
 
-    WeakSignal(const WeakSignal &) = delete;
-    WeakSignal(WeakSignal &&) = default;
-    WeakSignal &operator=(const WeakSignal &) = delete;
-    WeakSignal &operator=(WeakSignal &&) = default;
+    Signal(const Signal &) = delete;
+    Signal(Signal &&) = default;
+    Signal &operator=(const Signal &) = delete;
+    Signal &operator=(Signal &&) = default;
 
     void emit(Args... args)
     {
-        for (auto &awaiter : m_awaiters)
+        // We empty the member vector moving its contents to the stack vector
+        // so that awaiters could call wait() without problems in themselves
+        decltype(m_awaiters) awaiters;
+        std::swap(m_awaiters, awaiters);
+
+        for (auto &awaiter : awaiters)
         {
             if (awaiter == nullptr)
                 continue;
-
-            asio::post(m_io,
-                [aw = std::move(awaiter), ... args = std::move(args)] mutable
-                { std::move(aw)(std::move(args)...); });
+            awaiter(args...);
         }
-        m_awaiters.clear();
     }
 
     template <typename CompletionToken> auto wait(CompletionToken &&token)
@@ -58,22 +59,15 @@ public:
                         if (!type)
                             return;
 
-                        asio::post(m_io,
-                            [aw = std::move(m_awaiters[idx])] mutable
-                            {
-                                std::tuple<Args...> args;
-                                std::get<0>(args)
-                                    = asio::error::operation_aborted;
-
-                                std::apply([&](auto &&...args)
-                                    { std::move(aw)(std::move(args)...); },
-                                    args);
-                            });
+                        std::tuple<Args...> args;
+                        std::get<0>(args) = asio::error::operation_aborted;
+                        std::apply([&](auto &&...args)
+                            { m_awaiters[idx](std::move(args)...); }, args);
 
                         m_awaiters[idx] = nullptr;
                     });
             },
-            std::forward<CompletionToken>(token));
+            token);
     }
 
 private:
