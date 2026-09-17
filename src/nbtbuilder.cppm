@@ -32,20 +32,20 @@ export template <typename OutputIt> struct NBTBuilder
 
     template <std::integral T> NBTBuilder &operator<<(T i)
     {
-        it = protocolprimitives::write_integer(it, i);
+        it = protocolprimitives::write_number(it, i);
         return *this;
     }
 
     template <std::floating_point T> NBTBuilder &operator<<(T r)
     {
-        it = protocolprimitives::write_real(it, r);
+        it = protocolprimitives::write_number(it, r);
         return *this;
     }
 
     NBTBuilder &operator<<(std::string_view sv)
     {
         assert(sv.size() < 65500);
-        it = protocolprimitives::write_integer<uint16_t>(it, sv.size());
+        it = protocolprimitives::write_number<uint16_t>(it, sv.size());
         it = std::copy(sv.begin(), sv.end(), it);
         return *this;
     }

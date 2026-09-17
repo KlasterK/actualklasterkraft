@@ -22,8 +22,8 @@ export namespace chunkgen
     auto put_chunk_section_single_valued(auto it, int16_t block_count,
         int16_t fluid_count, int32_t block_state_value, int32_t biome_value)
     {
-        it = write_integer(it, block_count);
-        it = write_integer(it, fluid_count);
+        it = write_number(it, block_count);
+        it = write_number(it, fluid_count);
 
         // Block states paletted container
         *it++ = 0x00; // bits per entry
@@ -55,8 +55,8 @@ export namespace chunkgen
 
         *it1++ = 0x2D; // id Chunk Data and Update Light
 
-        it1 = write_integer(it1, chunk_pos.x);
-        it1 = write_integer(it1, chunk_pos.z);
+        it1 = write_number(it1, chunk_pos.x);
+        it1 = write_number(it1, chunk_pos.z);
 
         // Heightmaps (empty)
         it1 = write_var<uint32_t>(it1, 0);

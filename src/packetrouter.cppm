@@ -1,5 +1,9 @@
 module;
 #include <boost/asio.hpp>
+#include <boost/intrusive/link_mode.hpp>
+#include <boost/intrusive/list.hpp>
+#include <boost/intrusive/options.hpp>
+#include <boost/intrusive/slist.hpp>
 #include <boost/system.hpp>
 #include <exception>
 #include <functional>
@@ -7,6 +11,7 @@ module;
 #include <stdexcept>
 export module actualklasterkraft.packetrouter;
 
+import actualklasterkraft.errc;
 import actualklasterkraft.packetops;
 import actualklasterkraft.protocolprimitives;
 import actualklasterkraft.templates;
@@ -14,6 +19,7 @@ import actualklasterkraft.transport;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
+namespace bi = boost::intrusive;
 using namespace protocolprimitives;
 using asio::ip::tcp;
 
@@ -30,9 +36,9 @@ public:
     PacketSubscription &operator=(const PacketSubscription &) = delete;
 
     PacketSubscription(PacketSubscription &&other) noexcept
+        : m_table_entry(other.m_table_entry)
     {
-        m_table_entry = other.m_table_entry;
-        other.m_table_entry = nullptr;
+        std::swap(m_hook, other.m_hook);
     }
 
     PacketSubscription &operator=(PacketSubscription &&other) noexcept
@@ -40,36 +46,33 @@ public:
         if (&other == this)
             return *this;
 
-        if (m_table_entry)
-            *m_table_entry = nullptr;
-
+        reset();
         m_table_entry = other.m_table_entry;
-        other.m_table_entry = nullptr;
+        std::swap(m_hook, other.m_hook);
+
         return *this;
     }
 
-    ~PacketSubscription()
-    {
-        if (m_table_entry)
-            *m_table_entry = nullptr;
-    }
+    ~PacketSubscription() noexcept { reset(); }
 
     void reset() noexcept
     {
-        *m_table_entry = nullptr;
-        m_table_entry = nullptr;
+        if (m_hook.is_linked())
+            m_table_entry.get() = nullptr;
+        m_hook.unlink();
     }
 
 private:
     friend class PacketRouter;
 
-    PacketSubscription(MOF *entry)
+    PacketSubscription(MOF &entry) noexcept
         : m_table_entry(entry)
     {
     }
 
 private:
-    MOF *m_table_entry { };
+    std::reference_wrapper<MOF> m_table_entry;
+    bi::list_member_hook<bi::link_mode<bi::auto_unlink>> m_hook;
 };
 
 /******************************************************************************/
@@ -82,13 +85,16 @@ public:
     static constexpr uint32_t MaxPacketID = 128;
 
 public:
-    PacketRouter(Transport &transport, asio::streambuf &sb,
-        asio::any_completion_handler<OnErrorSignature> &&on_error)
+    PacketRouter(Transport &transport, asio::streambuf &sb)
         : m_transport(transport)
         , m_streambuf(sb)
-        , m_on_error(std::move(on_error))
     {
     }
+
+    PacketRouter(const PacketRouter &) = delete;
+    PacketRouter(PacketRouter &&) = delete;
+    PacketRouter &operator=(const PacketRouter &) = delete;
+    PacketRouter &operator=(PacketRouter &&) = delete;
 
     void begin_receiving()
     {
@@ -100,18 +106,17 @@ public:
                     std::rethrow_exception(exc_ptr);
 
                 if (ec)
-                    return m_on_error(ec);
+                    return cancel_all(ec);
 
                 auto packet_id = InlineTie(TieReturn, std::ignore, ec)
                     = read_var<uint32_t>(
                         std::istreambuf_iterator<char>(&m_streambuf),
                         std::istreambuf_iterator<char>());
                 if (ec)
-                    return m_on_error(ec);
+                    return cancel_all(ec);
 
                 if (packet_id >= MaxPacketID)
-                    throw std::logic_error(
-                        "PacketRouter::begin_receiving: received packet ID not in valid range");
+                    return cancel_all(MCProtocolError::UnexpectedPacketID);
 
                 if (m_callbacks[packet_id] == nullptr)
                 {
@@ -123,7 +128,7 @@ public:
                 }
                 else
                 {
-                    m_callbacks[packet_id](sys::error_code(), packet_id);
+                    m_callbacks[packet_id](sys::error_code { }, packet_id);
                 }
 
                 begin_receiving();
@@ -141,12 +146,24 @@ public:
                 "PacketRouter::subscribe: packet_id already taken");
 
         m_callbacks[packet_id] = std::forward<decltype(functor_cb)>(functor_cb);
-        return PacketSubscription(&m_callbacks[packet_id]);
+        return PacketSubscription(m_callbacks[packet_id]);
+    }
+
+private:
+    void cancel_all(sys::error_code ec)
+    {
+        for (uint32_t packet_id = 0; packet_id < MaxPacketID; ++packet_id)
+            if (m_callbacks[packet_id])
+                m_callbacks[packet_id](ec, packet_id);
     }
 
 private:
     Transport &m_transport;
     asio::streambuf &m_streambuf;
-    asio::any_completion_handler<OnErrorSignature> m_on_error;
+    bi::slist<PacketSubscription,
+        bi::member_hook<PacketSubscription,
+            decltype(PacketSubscription::m_hook), &PacketSubscription::m_hook>,
+        bi::constant_time_size<false>>
+        m_subscriptions;
     std::array<PacketSubscription::MOF, MaxPacketID> m_callbacks { };
 };

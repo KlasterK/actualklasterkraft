@@ -107,9 +107,9 @@ export template <typename T> class Vec2
 public:
     constexpr Vec2() = default;
 
-    constexpr Vec2(T x, T y)
+    constexpr Vec2(T x, T z)
         : x(x)
-        , z(y)
+        , z(z)
     {
     }
 
