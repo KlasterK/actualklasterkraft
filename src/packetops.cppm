@@ -1,75 +1,162 @@
 module;
+#include <array>
 #include <boost/asio.hpp>
+#include <boost/container/small_vector.hpp>
 #include <boost/system.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <tuple>
+#include <utility>
 export module actualklasterkraft.packetops;
 
 import actualklasterkraft.errc;
-import actualklasterkraft.session;
+import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.templates;
+import actualklasterkraft.transport;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
+using namespace protocolprimitives;
+
+constexpr int MaxPacketSizeVarIntByteLength = 3;
 
 export namespace packetops
 {
-    asio::awaitable<sys::error_code> await_for_packet(Session &session)
+    asio::awaitable<std::tuple<sys::error_code, size_t>> receive_packet_size(
+        Transport &transport)
     {
-        char byte { };
-        int32_t packet_size { };
+        uint8_t byte { };
+        uint32_t result { };
         unsigned position { };
-        sys::error_code ec { };
 
         for (;;)
         {
-            co_await asio::async_read(session.get_socket(),
-                asio::buffer(&byte, 1), asio::transfer_exactly(1),
-                asio::redirect_error(ec));
+            auto [ec, _] = co_await asio::async_read(transport.socket,
+                asio::buffer(&byte, 1), asio::transfer_all(), asio::as_tuple);
             if (ec)
-                co_return ec;
+                co_return std::tuple { ec, 0 };
 
-            packet_size |= uint32_t(byte & 0b01111111) << position;
+            result |= uint32_t(byte & 0b01111111) << position;
             if ((byte & 0b10000000) == 0)
-                break;
+                co_return std::tuple { sys::error_code { }, result };
 
             position += 7;
-            if (position > 32)
-                co_return MCProtocolError::VarIntTooBig;
+            if (position == 7 * MaxPacketSizeVarIntByteLength)
+                co_return std::tuple { MCProtocolError::VarIntTooBig, 0 };
         }
+    }
 
-        co_await asio::async_read(session.get_socket(), session.get_streambuf(),
-            asio::transfer_exactly(packet_size), asio::redirect_error(ec));
+    template <typename T>
+    asio::awaitable<sys::error_code> receive_raw_data(
+        Transport &transport, size_t size_limit, T &&buf_or_seq)
+    {
+        co_return std::get<sys::error_code>(co_await asio::async_read(
+            transport.socket, std::forward<T>(buf_or_seq),
+            asio::transfer_exactly(size_limit), asio::as_tuple));
+    }
 
+    asio::awaitable<sys::error_code> get(
+        Transport &transport, asio::streambuf &sb)
+    {
+        auto [ec, size] = co_await receive_packet_size(transport);
+        if (ec)
+            co_return ec;
+
+        co_return co_await receive_raw_data(transport, size, sb);
+    }
+
+    asio::awaitable<std::tuple<sys::error_code, size_t>> get(
+        Transport &transport, asio::mutable_buffer buf)
+    {
+        auto [ec, size] = co_await receive_packet_size(transport);
+        if (ec)
+            co_return std::tuple { ec, size };
+        if (size > buf.size())
+            co_return std::tuple { MCProtocolError::BufferTooSmallForPacket,
+                size };
+
+        ec = co_await receive_raw_data(transport, size, buf);
+        if (ec)
+            co_return std::tuple { ec, size };
+
+        co_return std::tuple { sys::error_code { }, size };
+    }
+
+    template <typename T>
+    asio::awaitable<sys::error_code> send_raw_data(
+        Transport &transport, T &&buf_or_seq)
+    {
+        co_return InlineTie(TieReturn, std::ignore)
+            = co_await asio::async_write(
+                transport.socket, std::forward<T>(buf_or_seq), asio::as_tuple);
+    }
+
+    asio::awaitable<sys::error_code> put(
+        Transport &transport, asio::const_buffer buf)
+    {
+        std::array<uint8_t, 5> size_buf;
+        auto size_end = write_var<uint32_t>(size_buf.begin(), buf.size());
+        size_t size_len = size_end - size_buf.begin();
+        if (size_len > MaxPacketSizeVarIntByteLength)
+            co_return MCProtocolError::VarIntTooBig;
+
+        std::array send_bufs { asio::const_buffer { size_buf.data(), size_len },
+            buf };
+        co_return co_await send_raw_data(transport, send_bufs);
+    }
+
+    asio::awaitable<sys::error_code> put(
+        Transport &transport, asio::streambuf &sb)
+    {
+        std::array<uint8_t, 5> size_buf;
+        auto size_end = write_var<uint32_t>(size_buf.begin(), sb.size());
+        size_t size_len = size_end - size_buf.begin();
+        if (size_len > MaxPacketSizeVarIntByteLength)
+            co_return MCProtocolError::VarIntTooBig;
+
+        boost::container::small_vector<asio::const_buffer, 2> send_bufs;
+        send_bufs.emplace_back(size_buf.data(), size_len);
+
+        auto sb_bufs = sb.data();
+        std::copy(asio::buffer_sequence_begin(sb_bufs),
+            asio::buffer_sequence_end(sb_bufs), std::back_inserter(send_bufs));
+
+        auto ec = co_await send_raw_data(transport, send_bufs);
+        sb.consume(sb.size());
         co_return ec;
     }
 
-    asio::awaitable<sys::error_code> flush_packet(Session &session,
-        std::optional<asio::const_buffer> override_buf = std::nullopt)
+    template <size_t N>
+    asio::awaitable<sys::error_code> put(
+        Transport &transport, std::span<asio::const_buffer, N> bufs)
     {
-        sys::error_code ec { };
         std::array<uint8_t, 5> size_buf;
-        uint8_t *size_end = size_buf.begin();
+        auto size_end = write_var<uint32_t>(size_buf.begin(), bufs.size());
+        size_t size_len = size_end - size_buf.begin();
+        if (size_len > MaxPacketSizeVarIntByteLength)
+            co_return MCProtocolError::VarIntTooBig;
 
-        for (uint32_t value = override_buf ? override_buf->size() : session.get_streambuf().size();;)
-        {
-            if ((value & ~0x7F) == 0)
-            {
-                *size_end++ = value & 0xFF;
-                break;
-            }
-            *size_end++ = (value & 0x7F) | 0x80;
-            value >>= 7u;
-        }
+        std::array<asio::const_buffer, N + 1> send_bufs { asio::const_buffer {
+            size_buf.data(), size_len } };
+        std::move(send_bufs.begin() + 1, send_bufs.end(), bufs.begin());
+        co_return co_await send_raw_data(transport, send_bufs);
+    }
 
-        std::array<asio::const_buffer, 2> bufs {
-            asio::buffer(size_buf.begin(), size_end - size_buf.begin()),
-            override_buf ? *override_buf : session.get_streambuf().data()
+    template <typename... Args>
+    asio::awaitable<sys::error_code> put_va(Transport &transport, Args... args)
+    {
+        std::array<asio::const_buffer, sizeof...(Args) + 1> send_bufs {
+            asio::const_buffer { }, asio::buffer(args)...
         };
 
-        co_await asio::async_write(
-            session.get_socket(), bufs, asio::redirect_error(ec));
+        std::array<uint8_t, 5> size_buf;
+        auto size_end = write_var<uint32_t>(
+            size_buf.begin(), asio::buffer_size(send_bufs));
+        size_t size_len = size_end - size_buf.begin();
+        if (size_len > MaxPacketSizeVarIntByteLength)
+            co_return MCProtocolError::VarIntTooBig;
+        send_bufs[0] = { size_buf.data(), size_len };
 
-        if (!override_buf.has_value())
-            session.get_streambuf().consume(session.get_streambuf().size());
-
-        co_return ec;
+        co_return co_await send_raw_data(transport, send_bufs);
     }
 }
