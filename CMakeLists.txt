@@ -21,7 +21,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED COMPONENTS json)
 find_package(OpenSSL REQUIRED)
 
 add_executable(actualklasterkraft)
@@ -34,6 +34,7 @@ target_sources(actualklasterkraft PUBLIC
         src/statecoroutines/status.cppm
         src/world/autogentest.cppm
         src/world/math.cppm
+        src/world/player.cppm
         src/acceptor.cppm
         src/bitfields.cppm
         src/disconnecthelpers.cppm
@@ -50,7 +51,7 @@ target_sources(actualklasterkraft PUBLIC
     PRIVATE
         src/main.cpp
 )
-target_link_libraries(actualklasterkraft PUBLIC Boost::boost OpenSSL::Crypto)
+target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL::Crypto)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(actualklasterkraft PRIVATE -Wall -Wextra -fdiagnostics-color=always)

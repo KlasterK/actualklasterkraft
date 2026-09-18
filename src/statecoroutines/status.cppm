@@ -1,99 +1,116 @@
-
 module;
 #include <boost/asio.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
+#include <boost/container/small_vector.hpp>
+#include <boost/json.hpp>
 #include <boost/system.hpp>
 #include <print>
+#include <ranges>
 export module actualklasterkraft.statecoroutines.status;
 
 import actualklasterkraft.errc;
 import actualklasterkraft.formatters;
 import actualklasterkraft.packetops;
-import actualklasterkraft.session;
-import actualklasterkraft.streambufops;
+import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.templates;
+import actualklasterkraft.transport;
+import actualklasterkraft.world.player;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
+using asio::ip::tcp;
+using namespace protocolprimitives;
+
+std::string generate_status_response_json()
+{
+    return boost::json::serialize(boost::json::value {
+        { "version",
+            {
+                { "name", "26.1.2" },
+                { "protocol", 775 },
+            } },
+        { "players",
+            {
+                { "max", get_global_player_pool().max_players() },
+                { "online", get_global_player_pool().count_living_players() },
+                { "sample",
+                    get_global_player_pool().living_players()
+                        | std::views::take(20)
+                        | std::views::transform(
+                            [](Player &p)
+                            {
+                                return boost::json::value { { "name",
+                                                                p.get_name() },
+                                    { "id",
+                                        std::format("{}",
+                                            FormatAsUUID { p.get_uuid() }) } };
+                            })
+                        | std::ranges::to<boost::json::array>() },
+            } },
+        { "description",
+            {
+                { "text", "An ActualKlasterKraft Server" },
+            } },
+        { "enforcesSecureChat", false },
+    });
+}
 
 export namespace statecoroutines
 {
-    asio::awaitable<void> status(boost::intrusive_ptr<Session> session)
+    asio::awaitable<void> status(Transport transport)
     {
-        sys::error_code ec { };
-        std::println("\tstate_status");
-
-        auto fail = [&session](sys::error_code a_ec)
+        auto fail = [&](sys::error_code a_ec)
         {
             std::println(
-                "\tProtocol desynced. Is it a Minecraft client? (error code: {})",
-                a_ec);
-            session->get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
-            session->get_socket().close();
+                "Connection {} requested Server List Ping but an error occured: {}",
+                transport.remote_endpoint_copy, a_ec);
+            transport.socket.shutdown(tcp::socket::shutdown_both);
+            transport.socket.close();
         };
 
-        // Should get packet Status Request
-        ec = co_await packetops::await_for_packet(*session);
+        std::array<uint8_t, 16> buf;
+
+        auto [ec, packet_size]
+            = co_await packetops::get(transport, asio::buffer(buf));
         if (ec)
             co_return fail(ec);
 
-        if (session->get_streambuf().sbumpc() != 0x00)
+        if (packet_size < 1)
+            co_return fail(MCProtocolError::UnsufficientPacketData);
+        if (packet_size > 1)
+            co_return fail(MCProtocolError::ExcessPacketData);
+        if (buf[0] != 0x00) // Status Request
             co_return fail(MCProtocolError::UnexpectedPacketID);
 
-        if (session->get_streambuf().size() > 0)
+        // Status Response packet ID matches
+        {
+            std::string json = generate_status_response_json();
+            auto end = write_var<uint32_t>(buf.data() + 1, json.size());
+            ec = co_await packetops::put_va(transport,
+                asio::buffer(buf.data(), end - buf.data()), asio::buffer(json));
+            if (ec)
+                co_return fail(ec);
+        }
+
+        std::tie(ec, packet_size)
+            = co_await packetops::get(transport, asio::buffer(buf));
+        if (ec)
+            co_return fail(ec);
+
+        if (packet_size < 9)
+            co_return fail(MCProtocolError::UnsufficientPacketData);
+        if (packet_size > 9)
             co_return fail(MCProtocolError::ExcessPacketData);
-
-        static constexpr std::string_view ExampleResponse = R"({
-            "version": {
-                "name": "26.1.2",
-                "protocol": 775
-            },
-            "players": {
-                "max": 20,
-                "online": 1,
-                "sample": []
-            },
-            "description": {
-                "text": "Hello World!"
-            },
-            "enforcesSecureChat": false
-        })";
-
-        // send Status Response
-        session->get_streambuf().sputc(0x00); // id
-        streambufops::write_string(session->get_streambuf(), ExampleResponse);
-
-        ec = co_await packetops::flush_packet(*session);
-        if (ec)
-            co_return fail(ec);
-
-        // Should get packet Ping Request
-        ec = co_await packetops::await_for_packet(*session);
-        if (ec)
-            co_return fail(ec);
-
-        if (session->get_streambuf().sbumpc() != 0x01)
+        if (buf[0] != 0x01) // Ping Request
             co_return fail(MCProtocolError::UnexpectedPacketID);
 
-        auto payload = streambufops::read_integer<uint64_t>(
-            session->get_streambuf(), ec);
+        // Pong Response looks the same as Pong Request so we send it back without changes
+        ec = co_await packetops::put(transport, asio::buffer(buf.data(), 9));
         if (ec)
             co_return fail(ec);
 
-        if (session->get_streambuf().size() > 0)
-            co_return fail(MCProtocolError::ExcessPacketData);
-
-        // Pong Response
-        session->get_streambuf().sputc(0x01); // id
-        streambufops::write_integer<uint64_t>(
-            session->get_streambuf(), payload);
-
-        ec = co_await packetops::flush_packet(*session);
-        if (ec)
-            co_return fail(ec);
-
-            
-        session->get_socket().shutdown(asio::ip::tcp::socket::shutdown_both);
-        session->get_socket().close();
+        std::println("Connection {} requested Server List Ping",
+            transport.remote_endpoint_copy);
+        transport.socket.shutdown(tcp::socket::shutdown_both);
+        transport.socket.close();
     }
 }
