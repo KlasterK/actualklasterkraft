@@ -1,4 +1,9 @@
 /build
+/xuild
 .vscode
 .cache
 .idea
+.vs
+/out
+vcpkg_installed
+
