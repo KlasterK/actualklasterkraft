@@ -9,7 +9,7 @@ namespace asio = boost::asio;
 
 export template <typename Signature> class Signal;
 
-export template <typename... Args>
+template <typename... Args>
     requires(
         (std::is_object_v<Args> && std::default_initializable<Args>) && ...)
 class Signal<void(Args...)>

@@ -1,86 +1,81 @@
 module;
+#include <array>
 #include <boost/asio.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
-#include <boost/uuid.hpp>
-#include <new>
-#include <openssl/md5.h>
-#include <print>
+#include <boost/system.hpp>
+#include <string>
 export module actualklasterkraft.statecoroutines.configuration;
 
 import actualklasterkraft.disconnecthelpers;
 import actualklasterkraft.errc;
-import actualklasterkraft.nbtbuilder;
 import actualklasterkraft.packetops;
 import actualklasterkraft.prebuiltconfiguration;
-import actualklasterkraft.session;
-import actualklasterkraft.formatters;
-import actualklasterkraft.streambufops;
+import actualklasterkraft.transport;
 import actualklasterkraft.statecoroutines.play;
 
 namespace asio = boost::asio;
-namespace sys = boost::system;
+using asio::ip::tcp;
 
 export namespace statecoroutines
 {
-    asio::awaitable<void> configuration(boost::intrusive_ptr<Session> session,
-        std::string &&player_name, std::array<uint8_t, 16> &&player_uuid)
+    asio::awaitable<void> configuration(Transport transport,
+        std::string player_name, std::array<uint8_t, 16> player_uuid)
     {
-        sys::error_code ec { };
-        std::println("\tstate_configuration");
-
         // For Configuration, we should synchronise our game data with client's game data.
         // We'll ignore serverbound packets for simplicity.
 
-        auto packet_it = PrebuiltConfigurationStatePackets.data.begin();
-        for (size_t packet_length : PrebuiltConfigurationStatePackets.lengths)
+        auto packet_it = PrebuiltConfigurationStagePackets.data.begin();
+        for (size_t packet_length : PrebuiltConfigurationStagePackets.lengths)
         {
             if (packet_length == 0)
                 break;
 
-            ec = co_await packetops::flush_packet(
-                *session, asio::buffer(packet_it, packet_length));
+            auto ec = co_await packetops::put(
+                transport, asio::buffer(packet_it, packet_length));
             if (ec)
-                co_return co_await disconnect::configuration(*session,
+                co_return co_await disconnect::configuration(transport,
                     disconnect::fmt_desync(
-                        ec, "prebuilt Configuration state packets"));
+                        ec, "prebuilt Configuration stage packets"));
             packet_it += packet_length;
         }
 
         // Finish Configuration (no fields)
-        session->get_streambuf().sputc(0x03);
-        ec = co_await packetops::flush_packet(*session);
+        uint8_t packet_id = 0x03;
+        auto ec
+            = co_await packetops::put(transport, asio::buffer(&packet_id, 1));
         if (ec)
             co_return co_await disconnect::configuration(
-                *session, disconnect::fmt_desync(ec, "Finish Configuration"));
+                transport, disconnect::fmt_desync(ec, "Finish Configuration"));
 
         // Ignore any packets until Acknowledge Finish Configuration
-        for (;;)
+        for (std::array<uint8_t, 65536> buf;;)
         {
-            ec = co_await packetops::await_for_packet(*session);
+            auto [ec, packet_size]
+                = co_await packetops::get(transport, asio::buffer(buf));
             if (ec)
-                co_return co_await disconnect::configuration(*session,
+                co_return co_await disconnect::configuration(transport,
                     disconnect::fmt_desync(
                         ec, "Acknowledge Finish Configuration"));
+            if (packet_size < 0)
+                co_return co_await disconnect::login(transport,
+                    disconnect::fmt_desync(
+                        MCProtocolError::UnsufficientPacketData,
+                        "Acknowledge Finish Configuration"));
 
             // Acknowledge Finish Configuration
-            if (session->get_streambuf().sbumpc() == 0x03)
+            if (buf[0] == 0x03)
             {
-                // No fields
-                if (session->get_streambuf().size() > 0)
-                    co_return co_await disconnect::configuration(*session,
+                if (packet_size > 1) // No fields
+                    co_return co_await disconnect::login(transport,
                         disconnect::fmt_desync(
                             MCProtocolError::ExcessPacketData,
                             "Acknowledge Finish Configuration"));
                 break;
             }
-            session->get_streambuf().consume(session->get_streambuf().size());
         }
 
-        asio::co_spawn(session->get_io(),
-            statecoroutines::play(
-                session, std::move(player_name), std::move(player_uuid)),
-            [session](std::exception_ptr exc_ptr)
-            { session->handle_coroutine_finished(exc_ptr); });
+        asio::co_spawn(transport.socket.get_executor(),
+            statecoroutines::play(std::move(transport), std::move(player_name),
+                std::move(player_uuid)),
+            asio::detached);
     }
 }
