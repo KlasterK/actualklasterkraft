@@ -1,0 +1,98 @@
+module;
+#include <boost/asio.hpp>
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/async_result.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/intrusive/link_mode.hpp>
+#include <boost/intrusive/list.hpp>
+#include <boost/intrusive/options.hpp>
+#include <coroutine>
+export module actualklasterkraft.pubsub;
+
+namespace asio = boost::asio;
+namespace bi = boost::intrusive;
+
+template <typename... Ts> class WeakSignal
+{
+public:
+    class Subscription
+    {
+    private:
+        friend WeakSignal;
+
+        using Hook = bi::list_member_hook<bi::link_mode<bi::auto_unlink>>;
+        Hook m_hook;
+
+        using MemberHookOption
+            = bi::member_hook<Subscription, Hook, &Subscription::m_hook>;
+        using List = bi::list<Subscription, MemberHookOption,
+            bi::constant_time_size<false>>;
+        List &m_list;
+
+        std::coroutine_handle<> m_coro_handle { };
+
+        std::tuple<Ts...> m_args;
+
+    private:
+        Subscription(List &list)
+            : m_list(list)
+        {
+        }
+
+        void signal_resume(asio::io_context &io, std::tuple<Ts...> args)
+        {
+            m_args = std::move(args);
+            asio::post(io, [h = m_coro_handle] mutable { h.resume(); });
+        }
+
+    public:
+        Subscription(const Subscription &) = delete;
+        Subscription(Subscription &&) = delete;
+        Subscription &operator=(const Subscription &) = delete;
+        Subscription &operator=(Subscription &&) = delete;
+
+        bool await_ready() noexcept { return false; }
+
+        void await_suspend(std::coroutine_handle<> h) noexcept
+        {
+            m_coro_handle = h;
+            m_list.push_back(*this);
+        }
+
+        std::tuple<Ts...> await_resume() noexcept { return std::move(m_args); }
+    };
+
+public:
+    WeakSignal(asio::io_context &io)
+        : m_io(io)
+    {
+    }
+
+    void emit_tuple(const std::tuple<Ts...> &args)
+    {
+        while (!m_list.empty())
+        {
+            auto &sub = m_list.front();
+            m_list.pop_front();
+            sub.signal_resume(m_io, args);
+        }
+    }
+
+    void emit(Ts... args) { emit_tuple(std::make_tuple(std::move(args)...)); }
+
+    Subscription wait() noexcept { return Subscription { m_list }; }
+
+    asio::awaitable<void> foo() { co_return co_await wait(); }
+
+private:
+    Subscription::List m_list;
+    asio::io_context &m_io;
+};
+
+asio::awaitable<void> foo()
+{
+    WeakSignal<> ws(*static_cast<asio::io_context *>(nullptr));
+    ws.emit();
+    co_await ws.wait();
+}
