@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <tuple>
 #include <utility>
+#include <span>
 export module actualklasterkraft.packetops;
 
 import actualklasterkraft.errc;

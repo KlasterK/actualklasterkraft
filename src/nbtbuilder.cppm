@@ -3,6 +3,7 @@ module;
 #include <concepts>
 #include <cstdint>
 #include <string_view>
+#include <algorithm>
 export module actualklasterkraft.nbtbuilder;
 
 import actualklasterkraft.protocolprimitives;

@@ -2,6 +2,7 @@ module;
 #include <array>
 #include <boost/container/static_vector.hpp>
 #include <cstdint>
+#include <tuple>
 export module actualklasterkraft.world.autogentest;
 
 import actualklasterkraft.protocolprimitives;

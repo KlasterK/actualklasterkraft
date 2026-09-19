@@ -25,8 +25,8 @@ find_package(Boost REQUIRED COMPONENTS json)
 find_package(OpenSSL REQUIRED)
 
 add_executable(actualklasterkraft)
-target_sources(actualklasterkraft PUBLIC 
-    FILE_SET CXX_MODULES FILES
+target_sources(actualklasterkraft
+    PUBLIC FILE_SET CXX_MODULES FILES
         src/statecoroutines/configuration.cppm
         src/statecoroutines/handshake.cppm
         src/statecoroutines/login.cppm
@@ -70,40 +70,50 @@ endif()
 if(ACTUALKLASTERKRAFT_ENABLE_PCH)
     target_precompile_headers(actualklasterkraft PRIVATE
         <boost/asio.hpp>
+        <boost/asio/experimental/awaitable_operators.hpp>
         <boost/asio/experimental/channel.hpp>
+        <boost/container/small_vector.hpp>
         <boost/container/static_vector.hpp>
         <boost/endian.hpp>
-        <boost/intrusive_ptr.hpp>
-        <boost/smart_ptr/intrusive_ref_counter.hpp>
+        <boost/intrusive/link_mode.hpp>
+        <boost/intrusive/list.hpp>
+        <boost/intrusive/options.hpp>
+        <boost/intrusive/slist.hpp>
+        <boost/json.hpp>
         <boost/system.hpp>
-        <boost/uuid.hpp>
 
-        <openssl/md5.h>
-        
+        <openssl/err.h>
+        <openssl/evp.h>
+
+        <algorithm>
         <array>
+        <bit>
         <cassert>
         <chrono>
+        <cmath>
         <concepts>
-        <coroutine>
         <cstddef>
-        <cstdint>
         <cstdint>
         <cstdio>
         <exception>
-        <expected>
         <format>
         <functional>
         <iterator>
-        <new>
+        <limits>
+        <memory>
+        <numbers>
+        <numeric>
         <optional>
         <print>
         <random>
-        <spanstream>
+        <ranges>
+        <span>
         <stdexcept>
         <string>
         <string_view>
-        <system_error>
         <tuple>
+        <type_traits>
+        <utility>
         <vector>
     )
 endif()

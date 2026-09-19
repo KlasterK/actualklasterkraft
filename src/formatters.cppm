@@ -1,8 +1,9 @@
 module;
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <boost/system.hpp>
 #include <format>
-#include <spanstream>
+#include <span>
 export module actualklasterkraft.formatters;
 
 template <> struct std::formatter<boost::system::error_code, char>
@@ -38,10 +39,10 @@ template <> struct std::formatter<boost::asio::ip::tcp::endpoint, char>
     std::format_context::iterator format(
         boost::asio::ip::tcp::endpoint endpoint, std::format_context &ctx) const
     {
-        std::array<char, 64> buf;
-        std::ospanstream oss { buf };
+        std::ostringstream oss;
         oss << endpoint;
-        return std::copy(oss.span().begin(), oss.span().end(), ctx.out());
+        std::string str = std::move(oss).str();
+        return std::copy(str.begin(), str.end(), ctx.out());
     }
 };
 

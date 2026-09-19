@@ -23,13 +23,21 @@ namespace bi = boost::intrusive;
 using namespace protocolprimitives;
 using asio::ip::tcp;
 
+template <typename... Ts>
+using MoveOnlyOrOldFunction =
+#ifdef __cpp_lib_move_only_function
+    std::move_only_function<Ts...>;
+#else
+    std::function<Ts...>;
+#endif
+
 /******************************************************************************/
 
 export class PacketSubscription
 {
 public:
     using Signature = void(sys::error_code, uint32_t);
-    using MOF = std::move_only_function<Signature>;
+    using MOF = MoveOnlyOrOldFunction<Signature>;
 
 public:
     PacketSubscription(const PacketSubscription &) = delete;

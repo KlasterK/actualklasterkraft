@@ -8,6 +8,7 @@ module;
 #include <limits>
 #include <string_view>
 #include <tuple>
+#include <numbers>
 export module actualklasterkraft.protocolprimitives;
 
 import actualklasterkraft.errc;
