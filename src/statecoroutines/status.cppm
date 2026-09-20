@@ -31,7 +31,7 @@ std::string generate_status_response_json()
         { "players",
             {
                 { "max", get_global_player_pool().max_players() },
-                { "online", get_global_player_pool().count_living_players() },
+                { "online", get_global_player_pool().count_taken_slots() },
                 { "sample",
                     get_global_player_pool().living_players()
                         | std::views::take(20)

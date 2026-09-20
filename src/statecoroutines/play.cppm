@@ -587,8 +587,8 @@ asio::awaitable<void> statecoroutines::play(
     // Incoming messages soaking
     std::function<void(sys::error_code, Player::SharedTextComponent, bool)>
         when_saw_chat_message
-        = [&](sys::error_code ec, Player::SharedTextComponent text_component,
-              bool is_overlay)
+        = [&, p = player.get()](sys::error_code ec,
+              Player::SharedTextComponent text_component, bool is_overlay)
     {
         if (ec)
             return;
@@ -598,7 +598,7 @@ asio::awaitable<void> statecoroutines::play(
                 transport, std::move(text_component), is_overlay),
             asio::detached);
 
-        player->wait_chat_message(when_saw_chat_message);
+        p->wait_chat_message(when_saw_chat_message);
     };
     player->wait_chat_message(when_saw_chat_message);
 

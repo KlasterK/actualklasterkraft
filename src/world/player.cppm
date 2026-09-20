@@ -152,10 +152,14 @@ private:
         m_spawn_info = { };
 
         m_on_posrot_update.emit(MCProtocolError::EntityWasKilled, { });
+        // In case somebody started waiting OnAboutToDie in an OnAboutToDie handler
+        m_on_about_to_die.emit(MCProtocolError::EntityWasKilled);
         m_on_player_enter_simulation_distance.emit(
             MCProtocolError::EntityWasKilled, nullptr);
         m_on_player_exit_simulation_distance.emit(
             MCProtocolError::EntityWasKilled, nullptr);
+        m_on_chat_message.emit(
+            MCProtocolError::EntityWasKilled, nullptr, false);
     }
 
 private:
@@ -217,14 +221,17 @@ public:
         for (; bitmap_idx < N / 64; ++bitmap_idx)
         {
             uint64_t bitmap = m_pool->m_bitmaps[bitmap_idx];
-            bitmap >>= bit_idx;
+            bitmap &= ~uint64_t(0) << bit_idx; // clear bits lower than bit_idx
 
-            int one_shifted_pos = std::countr_zero(bitmap);
-            if (one_shifted_pos != 64)
+            while (bitmap != 0)
             {
-                m_idx = bitmap_idx * 64 + one_shifted_pos + bit_idx;
+                int one_pos = std::countr_zero(bitmap);
+
+                m_idx = bitmap_idx * 64 + one_pos;
                 if (this[0]->get_state() == Player::State::Alive)
                     return *this;
+
+                bitmap &= bitmap - 1; // clear last set bit
             }
             bit_idx = 0;
         }
@@ -330,19 +337,19 @@ public:
     auto living_players()
     {
         LivingPlayersIterator<PlayerPool> begin { *this, 0 }, end { *this, N };
-        if (0 == (m_bitmaps.front() & 1))
+        if (m_players->front().get_state() != Player::State::Alive)
             ++begin;
         return std::ranges::subrange(begin, end);
     }
 
-    size_t count_living_players()
+    size_t count_taken_slots()
     {
         return std::accumulate(m_bitmaps.begin(), m_bitmaps.end(), 0zu,
             [](size_t sum, uint64_t bitmap)
             { return sum + std::popcount(bitmap); });
     }
 
-    size_t max_players() { return N; }
+    constexpr size_t max_players() { return N; }
 
 private:
     friend LivingPlayersIterator<PlayerPool>;
