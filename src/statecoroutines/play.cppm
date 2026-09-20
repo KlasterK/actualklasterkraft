@@ -40,10 +40,11 @@ static std::mt19937 g_rng { std::random_device { }() };
 static std::uniform_int_distribution<uint64_t> g_u64_dist { };
 static std::uniform_int_distribution<uint32_t> g_u32_dist { };
 
-bool is_normal_shutdown(sys::error_code ec)
+bool is_normal_shutdown(sys::error_code non_empty_ec)
 {
-    return ec == asio::error::eof || ec == asio::error::operation_aborted
-        || ec == asio::error::bad_descriptor;
+    return non_empty_ec == asio::error::eof
+        || non_empty_ec == asio::error::operation_aborted
+        || non_empty_ec == asio::error::bad_descriptor;
 }
 
 /******************************************************************************/
@@ -267,6 +268,21 @@ asio::awaitable<void> pull_posrot_loop(
             co_return co_await disconnect::play(transport,
                 disconnect::fmt_desync(
                     ec, "Update Player Position/Rotation/both"));
+
+        if (partial_posrot.is_rotation_present)
+        {
+            vec.clear();
+            *it++ = 0x53; // Update Head Rotation
+            write_var<uint32_t>(it, target.get_eid());
+            write_angle256(it, partial_posrot.head_yaw);
+
+            ec = co_await packetops::put(transport, asio::buffer(vec));
+            if (is_normal_shutdown(ec))
+                co_return;
+            else if (ec)
+                co_return co_await disconnect::play(transport,
+                    disconnect::fmt_desync(ec, "Update Head Rotation"));
+        }
     }
 }
 
@@ -328,6 +344,7 @@ asio::awaitable<void> push_posrot_loop(Transport &transport,
                         disconnect::fmt_desync(ec,
                             "Set Player Position/Rotation/both/Movement Flags"));
             }
+            result.head_yaw = result.yaw;
             result.is_rotation_present = true;
         }
         int flags = sb.sbumpc();
@@ -363,8 +380,7 @@ asio::awaitable<void> send_spawn_entity_of_player(
     *it++ = 0x00;
     it = write_angle256(it, other.get_posrot().pitch);
     it = write_angle256(it, other.get_posrot().yaw);
-    // Head Yaw actually but we don't have it yet
-    it = write_angle256(it, other.get_posrot().yaw);
+    it = write_angle256(it, other.get_posrot().head_yaw);
     // Data, not for players
     it = write_var<uint32_t>(it, 0);
 
@@ -500,6 +516,7 @@ asio::awaitable<void> statecoroutines::play(
                 .position { 8.0, 82.0, 8.0 },
                 .pitch { },
                 .yaw { },
+                .head_yaw { },
                 .is_on_ground { false },
                 .is_pushing_against_wall { false },
                 .is_position_present { true },

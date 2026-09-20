@@ -25,6 +25,7 @@ export struct PosRot
     Vec3<double> position;
     Angle pitch;
     Angle yaw;
+    Angle head_yaw;
     bool is_on_ground : 1 = false;
     bool is_pushing_against_wall : 1 = false;
     bool is_position_present : 1 = false;
@@ -42,6 +43,7 @@ export struct PosRot
         {
             pitch = other.pitch;
             yaw = other.yaw;
+            head_yaw = other.head_yaw;
             is_rotation_present = 1;
         }
 
