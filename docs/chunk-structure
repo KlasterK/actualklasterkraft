@@ -57,7 +57,7 @@ Paletted Container
 ==================
 
 A Paletted Container is a palette-based storage of entries. Paletted Containers have an associated global palette (either block states or biomes as of now),
-where values are mapped from. A Paletted Container consists of the following fields:
+where values are mapped from. X->Z->Y. A Paletted Container consists of the following fields:
 
 bits per entry  : u8
 palette         : variant <single valued = v32, indirect = prefixed array of v32, direct = void>
@@ -114,6 +114,21 @@ The Bits Per Entry value used is calculated as ceil(log2(world_height + 1)).
 This is because the number of possible height values is one more than the world height—ranging from 0 (completely blank column; not even bedrock) 
 to world height (highest position is occupied). Note that this means, for example, that a world with height 256 will use a Bits Per Entry of 9. 
 Since the minimum world height might be negative, it must be added as an offset to get the actual highest occupied Y coordinate.
+
+As of 1.21.5, the length of the data array is no longer sent with the packet, but is instead calculated from the bits per entry and the number of entries.
+
+The Data Array stores entries as Bits Per Entry–bit integers, corresponding to either local or global palette indices
+depending on the palette format in use. If Bits Per Entry is 0, it is empty.
+
+A single long of the array holds several entries. The entries are tightly packed within the long, with the first entry on the least significant bits.
+An entry cannot span across multiple longs; instead, padding is inserted as required, starting from the most significant bits.
+
+For example, assuming a bits per block value of 15, and that bit 0 is the least significant bit,
+the data is stored such that bits 0 through 14 are the first entry, 15 through 29 are the second, and so on.
+The fourth entry ends on bit 59, and since only 4 bits are left, they become padding, and the fifth entry starts on the next long.
+
+Note that since longs are sent in big endian order,
+the least significant bit of the first entry in a long will be on the last byte of the long on the wire. 
 
 
 

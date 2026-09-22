@@ -15,9 +15,9 @@ public:
     static_assert(N > 0 && N % 64 == 0);
 
 public:
-    size_t allocate()
+    size_t allocate(const size_t *in_hint = nullptr, size_t *out_hint = nullptr)
     {
-        for (size_t i { }; i < N / 64; ++i)
+        for (size_t i { in_hint ? *in_hint : 0 }; i < N / 64; ++i)
         {
             auto &bitmap = m_bitmaps[i];
 
@@ -26,6 +26,9 @@ public:
                 continue;
 
             bitmap |= (uint64_t(1) << zero_pos);
+
+            if (out_hint)
+                *out_hint = i;
             return i * 64 + zero_pos;
         }
         return N;

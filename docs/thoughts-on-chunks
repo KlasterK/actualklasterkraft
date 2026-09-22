@@ -1,0 +1,7 @@
+## Slab optimisation
+
+Current Chunk class weights 199 520 bytes ≈ 195 KiB. If a player has render distance 16 then it requires ~800 chunks to be loaded in memory. 195 KiB * 800 ≈ 156 MiB.
+
+Chunk class weights 195 KiB because its chunk sections store arrays of block states directly in std::array, not using the heap. But 2:3 of a minecraft:plains chunk is single valued air and remaining 1:3 could be stored in the memory using Local Palette format, if the palette would be 16 entries or less (4 bits per entry), it'll weight 1:4 of Direct format memory usage.
+
+This way, only without air a chunk will weight ~50 MiB, and with reduced entries memory usage, it'll weight only ~13 MiB. But note that it doesn't take into account Heightmaps, Block Entities, Light Data, and it'll work worse with hills, mountains, structures and if a player touched a chunk section (it'll make format Direct forever unless some sort of optimisation is made).
