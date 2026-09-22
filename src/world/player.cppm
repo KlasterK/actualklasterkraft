@@ -10,6 +10,7 @@ module;
 #include <utility>
 export module actualklasterkraft.world.player;
 
+import actualklasterkraft.basepool;
 import actualklasterkraft.bitfields;
 import actualklasterkraft.errc;
 import actualklasterkraft.pubsub;
@@ -180,96 +181,18 @@ private:
 
 /******************************************************************************/
 
-export template <typename> class LivingPlayersIterator;
-
-export template <template <size_t> typename PoolT, size_t N>
-class LivingPlayersIterator<PoolT<N>>
+export template <size_t N> class PlayerPool : private BasePool<N>
 {
-public:
-    using iterator_concept = std::forward_iterator_tag;
-    using iterator_category = std::forward_iterator_tag;
-    using value_type = Player;
-    using difference_type = std::ptrdiff_t;
-    using reference = Player &;
-    using pointer = Player *;
-
-public:
-    LivingPlayersIterator() noexcept = default;
-
-    bool operator==(const LivingPlayersIterator &other) const noexcept
-    {
-        return m_pool == other.m_pool && m_idx == other.m_idx;
-    }
-
-    reference operator*() const noexcept
-    {
-        assert(m_idx < N);
-        return (*m_pool->m_players)[m_idx];
-    }
-
-    pointer operator->() const noexcept { return &**this; }
-
-    LivingPlayersIterator &operator++() noexcept
-    {
-        size_t bitmap_idx = m_idx / 64;
-        int bit_idx = m_idx % 64 + 1;
-
-        if (bit_idx == 64)
-        {
-            ++bitmap_idx;
-            bit_idx = 0;
-        }
-
-        for (; bitmap_idx < N / 64; ++bitmap_idx)
-        {
-            uint64_t bitmap = m_pool->m_bitmaps[bitmap_idx];
-            bitmap &= ~uint64_t(0) << bit_idx; // clear bits lower than bit_idx
-
-            while (bitmap != 0)
-            {
-                int one_pos = std::countr_zero(bitmap);
-
-                m_idx = bitmap_idx * 64 + one_pos;
-                if (this[0]->get_state() == Player::State::Alive)
-                    return *this;
-
-                bitmap &= bitmap - 1; // clear last set bit
-            }
-            bit_idx = 0;
-        }
-
-        m_idx = N;
-        return *this;
-    }
-
-    LivingPlayersIterator operator++(int) noexcept
-    {
-        auto tmp = *this;
-        ++*this;
-        return tmp;
-    }
-
 private:
-    friend PoolT<N>;
-
-    LivingPlayersIterator(PoolT<N> &pool, size_t idx)
-        : m_pool(&pool)
-        , m_idx(idx)
-    {
-    }
-
-private:
-    PoolT<N> *m_pool = nullptr;
-    size_t m_idx = 0;
-};
-
-/******************************************************************************/
-
-export template <size_t N> class PlayerPool
-{
-public:
-    static_assert(N > 0 && N % 64 == 0);
+    using ValueType = Player;
     static constexpr uint32_t EIDBase = 0;
+
+    friend PoolTakenSlotsIterator<PlayerPool>;
+    Player &pool_iterator_dereference(size_t idx) { return (*m_players)[idx]; }
+    bool pool_iterator_test(size_t idx)
+    {
+        return (*m_players)[idx].get_state() == Player::State::Alive;
+    }
 
 public:
     PlayerPool(asio::any_io_executor io)
@@ -286,22 +209,14 @@ public:
 
     Player *spawn(PosRot posrot, Player::SpawnInfo &&spawn_info)
     {
-        for (size_t i { }; i < N / 64; ++i)
-        {
-            auto &bitmap = m_bitmaps[i];
+        size_t idx = BasePool<N>::allocate();
+        if (idx == N)
+            return nullptr;
 
-            int zero_pos = std::countr_one(bitmap);
-            if (zero_pos >= 64)
-                continue;
-
-            bitmap |= (uint64_t(1) << zero_pos);
-
-            auto &player = (*m_players)[i * 64 + zero_pos];
-            player.spawn(posrot, std::move(spawn_info));
-            m_on_player_spawn.emit({ }, &player);
-            return &player;
-        }
-        return nullptr;
+        auto &player = (*m_players)[idx];
+        player.spawn(std::move(posrot), std::move(spawn_info));
+        m_on_player_spawn.emit({ }, &player);
+        return &player;
     }
 
     void kill(Player &player)
@@ -315,10 +230,7 @@ public:
                 if (!player || ec)
                     return;
 
-                size_t idx = player - m_players->data();
-                assert(idx < N);
-                m_bitmaps[idx / 64] &= ~(uint64_t(1) << (idx % 64));
-
+                BasePool<N>::free(player - m_players->data());
                 player->end_death();
             });
 
@@ -338,33 +250,26 @@ public:
 
     auto living_players()
     {
-        LivingPlayersIterator<PlayerPool> begin { *this, 0 }, end { *this, N };
+        PoolTakenSlotsIterator<PlayerPool> begin { *this, 0 }, end { *this, N };
         if (m_players->front().get_state() != Player::State::Alive)
             ++begin;
         return std::ranges::subrange(begin, end);
     }
 
-    size_t count_taken_slots()
-    {
-        return std::accumulate(m_bitmaps.begin(), m_bitmaps.end(), 0zu,
-            [](size_t sum, uint64_t bitmap)
-            { return sum + std::popcount(bitmap); });
-    }
+    using BasePool<N>::count_taken_slots;
 
     constexpr size_t max_players() { return N; }
 
 private:
-    friend LivingPlayersIterator<PlayerPool>;
-    static_assert(std::forward_iterator<LivingPlayersIterator<PlayerPool>>);
-
     std::unique_ptr<std::array<Player, N>> m_players;
     Signal<void(sys::error_code, Player *)> m_on_player_spawn,
         m_on_player_about_to_die;
-
-    std::array<uint64_t, N / 64> m_bitmaps { };
 };
 
 /******************************************************************************/
+
+// forces clangd to lint properly
+template class PlayerPool<256>;
 
 std::optional<PlayerPool<256>> g_player_pool;
 

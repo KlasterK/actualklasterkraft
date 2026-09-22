@@ -36,6 +36,7 @@ target_sources(actualklasterkraft
         src/world/math.cppm
         src/world/player.cppm
         src/acceptor.cppm
+        src/basepool.cppm
         src/bitfields.cppm
         src/disconnecthelpers.cppm
         src/errc.cppm
