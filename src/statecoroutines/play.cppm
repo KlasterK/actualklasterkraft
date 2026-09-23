@@ -642,7 +642,6 @@ asio::awaitable<void> statecoroutines::play(
 
     streambuf.sputc(0x48); // packet id
     write_var<uint32_t>(OSI(&streambuf), teleport_id);
-    // TODO: client somewhy ignores sent values and places the player at (0; 0; 0)
     write_xyz(OSI(&streambuf), player->get_posrot().position);
     write_xyz(OSI(&streambuf), Vec3<double>()); // velocity
     write_number(OSI(&streambuf), player->get_posrot().yaw.as_degrees());

@@ -1,257 +1,238 @@
 module;
 #include <algorithm>
 #include <array>
+#include <boost/container/flat_map.hpp>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <ranges>
 #include <span>
 export module actualklasterkraft.world.chunk;
 
 import actualklasterkraft.basepool;
 import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.world.blockstates;
 import actualklasterkraft.world.math;
 
 using namespace protocolprimitives;
 
-template <typename T, typename... Args>
-    requires(std::convertible_to<Args, T> && ...)
-consteval auto guarantee_sorted_array(Args... args)
-{
-    std::array<T, sizeof...(Args)> array { static_cast<T>(args)... };
-    if (!std::ranges::is_sorted(array))
-        throw;
-    return array;
-}
-
 /******************************************************************************/
 
-export namespace palette
+auto encode_bit_entries(auto it, size_t bits_per_entry, auto get_value)
 {
-    struct DirectFormat
+    size_t entries_per_u64 = 64 / bits_per_entry;
+    size_t u64s_count
+        = (BlockExtentCub + entries_per_u64 - 1) / entries_per_u64;
+    for (size_t i { }; i < u64s_count; ++i)
     {
-    };
-
-    struct SingleValueFormat
-    {
-        uint32_t value { };
-    };
-
-    struct LocalPaletteFormat
-    {
-        std::span<const uint32_t> palette;
-    };
-
-    using FormatVariant = std::variant<palette::DirectFormat,
-        palette::SingleValueFormat, palette::LocalPaletteFormat>;
-
-    constexpr auto AnyAirPalette
-        = guarantee_sorted_array<uint32_t>(0, 15292, 15293);
-
-    constexpr std::array<uint32_t, 0> AnyFluidPalette; // FIXME: fill
-
-    bool is_air(uint32_t v)
-    {
-        return std::ranges::binary_search(palette::AnyAirPalette, v);
+        uint64_t storage { };
+        for (size_t j { entries_per_u64 }; j-- > 0;)
+        {
+            if (i * entries_per_u64 + j >= BlockExtentCub)
+                continue;
+            storage <<= bits_per_entry;
+            storage |= get_value(i * entries_per_u64 + j);
+        }
+        it = write_number(it, storage);
     }
-
-    bool is_fluid(uint32_t v)
-    {
-        return std::ranges::binary_search(palette::AnyFluidPalette, v);
-    }
+    return it;
 }
 
-/******************************************************************************/
-
-export namespace palette
+struct DirectPC
 {
-    template <size_t Extent, typename EntryInt>
-    uint32_t get(const palette::FormatVariant &format, const EntryInt *data,
-        Vec3<int> pos)
-    {
-        assert(pos.x >= 0 && pos.x < Extent && pos.y >= 0 && pos.y < Extent
-            && pos.z >= 0 && pos.z < Extent);
+    std::unique_ptr<std::array<uint16_t, BlockExtentCub>> data;
 
-        if (auto *fmt = std::get_if<palette::SingleValueFormat>(&format))
-            return fmt->value;
-        if (auto *fmt = std::get_if<palette::LocalPaletteFormat>(&format))
-            return fmt->palette[data[pos.x + pos.z * Extent
-                + pos.y * Extent * Extent]];
-        return data[pos.x + pos.z * Extent + pos.y * Extent * Extent];
+    DirectPC()
+        : data(std::make_unique<std::array<uint16_t, BlockExtentCub>>())
+    {
     }
 
-    template <size_t Extent, typename EntryInt>
-    void convert_to_direct(palette::FormatVariant &format, EntryInt *data)
+    uint32_t get(size_t idx) const { return (*data)[idx]; }
+
+    auto serialize(auto it) const
     {
-        if (auto *fmt = std::get_if<palette::SingleValueFormat>(&format))
-        {
-            for (size_t i { }; i < Extent * Extent * Extent; ++i)
-                data[i] = fmt->value;
-        }
-        else if (auto *fmt = std::get_if<palette::LocalPaletteFormat>(&format))
-        {
-            for (size_t i { }; i < Extent * Extent * Extent; ++i)
-                data[i] = fmt->palette[data[i]];
-        }
-        format = palette::DirectFormat { };
-    }
-
-    template <size_t Extent, typename EntryInt>
-    void set_direct(palette::FormatVariant &format, EntryInt *data,
-        Vec3<int> pos, EntryInt value)
-    {
-        assert(pos.x >= 0 && pos.x < Extent && pos.y >= 0 && pos.y < Extent
-            && pos.z >= 0 && pos.z < Extent);
-
-        convert_to_direct(format, data);
-        m_states[pos.x + pos.z * Extent + pos.y * Extent * Extent] = value;
-    }
-
-    template <size_t Extent, typename EntryInt>
-    void set_local_paletted_fallback_to_direct(Vec3<int> pos,
-        palette::FormatVariant &format, EntryInt *data,
-        std::span<const uint32_t> palette, size_t index)
-    {
-        assert(pos.x >= 0 && pos.x < Extent && pos.y >= 0 && pos.y < Extent
-            && pos.z >= 0 && pos.z < Extent && index < palette.size());
-
-        if (auto *fmt = std::get_if<palette::LocalPaletteFormat>(&format);
-            fmt == nullptr || fmt->palette.data() != palette.data()
-            || fmt->palette.size() != palette.size())
-        {
-            set_direct(pos, palette[index]);
-            return;
-        }
-
-        m_states[pos.x + pos.z * Extent + pos.y * Extent * Extent] = index;
-    }
-
-    auto serialize(auto it)
-    {
-        if (auto *fmt = std::get_if<palette::SingleValueFormat>(&m_format))
-        {
-            it = write_number(it, uint8_t(0));
-            it = write_var<uint32_t>(it, fmt->value);
-            return it;
-        }
-
-        int bits_per_entry = DirectBitsPerEntry;
-        std::span<const uint32_t> palette_opt;
-
-        if (auto *fmt = std::get_if<palette::LocalPaletteFormat>(&m_format))
-        {
-            bits_per_entry = std::max(MinLocalPaletteBitsPerEntry,
-                std::bit_width(fmt->palette.size() - 1));
-            palette_opt = fmt->palette;
-        }
-
-        it = write_number(it, uint8_t(bits_per_entry));
-        if (palette_opt.data())
-        {
-            it = write_var<uint32_t>(it, palette_opt.size());
-            for (uint32_t entry : palette_opt)
-                it = write_var<uint32_t>(it, entry);
-        }
-
-        int entries_per_u64 = 64 / bits_per_entry;
-        int u64s_count
-            = (m_states.size() + entries_per_u64 - 1) / entries_per_u64;
-        for (int i { }; i < u64s_count; ++i)
-        {
-            uint64_t storage { };
-            for (int j { entries_per_u64 }; j-- > 0;)
-            {
-                if (i * entries_per_u64 + j >= m_states.size())
-                    continue;
-                storage <<= bits_per_entry;
-                storage |= m_states[i * entries_per_u64 + j];
-            }
-            it = write_number(it, storage);
-        }
+        it = write_number(it, uint8_t(15));
+        it = encode_bit_entries(
+            it, 15, [this](size_t idx) { return get(idx); });
         return it;
     }
-}
+};
+
+struct SingleValuedPC
+{
+    uint32_t value = 0;
+
+    uint32_t get(size_t) const { return value; }
+
+    auto serialize(auto it) const
+    {
+        it = write_number(it, uint8_t(0));
+        it = write_var<uint32_t>(it, value);
+        return it;
+    }
+};
+
+struct IndirectPC
+{
+    std::span<const uint32_t> palette;
+    std::unique_ptr<uint8_t[]> data;
+
+    IndirectPC(std::span<const uint32_t> palette)
+        : data(std::make_unique<uint8_t[]>(
+              palette.size() < 16 ? BlockExtentCub / 2 : BlockExtentCub))
+    {
+        assert(palette.size() < 256);
+    }
+
+    uint32_t get(size_t idx) const
+    {
+        if (palette.size() >= 16)
+            return palette[data[idx]];
+        if (idx % 2 == 0)
+            return palette[data[idx / 2] & 0x0F];
+        return palette[data[idx / 2] >> 4];
+    }
+
+    auto serialize(auto it) const
+    {
+        uint8_t bpe = std::max(4, std::bit_width(palette.size() - 1));
+
+        it = write_number<uint8_t>(it, bpe);
+        it = write_var<uint32_t>(it, palette.size());
+        for (uint32_t entry : palette)
+            it = write_var<uint32_t>(it, entry);
+        it = encode_bit_entries(
+            it, bpe, [this](size_t idx) { return get(idx); });
+
+        return it;
+    }
+
+    void set(size_t idx, uint8_t value)
+    {
+        if (palette.size() >= 16)
+            data[idx] = value;
+        if (idx % 2 == 0)
+            data[idx / 2] = (data[idx / 2] & 0xF0) | value;
+        data[idx / 2] = (data[idx / 2] & 0x0F) | (value << 4);
+    }
+
+    bool test_palette(std::span<const uint32_t> other) const
+    {
+        return palette.data() == other.data();
+    }
+};
+
+using PalettedContainer = std::variant<DirectPC, SingleValuedPC, IndirectPC>;
 
 /******************************************************************************/
 
 export class ChunkSection
 {
 public:
-    ChunkSection(palette::FormatVariant block_states_fmt,
-        palette::FormatVariant biomes_fmt)
-        : m_block_states(block_states_fmt)
-        , m_biomes(biomes_fmt)
-        , m_block_count(is_air(m_block_states.get({ })) ? 16 * 16 * 16 : 0)
-        , m_fluid_count(is_fluid(m_block_states.get({ })) ? 16 * 16 * 16 : 0)
+    ChunkSection()
+        : m_block_states(SingleValuedPC { 0 })
     {
     }
 
-    uint32_t get_block(Vec3<int> pos16) const
+    ChunkSection(std::span<const uint32_t> palette)
+        : m_block_states(IndirectPC { palette })
+        , m_block_count(blockstates::is_air(palette[0]) ? 0 : BlockExtentCub)
+        , m_fluid_count(blockstates::is_fluid(palette[0]) ? BlockExtentCub : 0)
     {
-        return m_block_states.get(pos16);
+    }
+
+    void reset_with_palette(std::span<const uint32_t> palette)
+    {
+        *this = ChunkSection(palette);
+    }
+
+    [[nodiscard]] uint32_t get_block(Vec3<int> pos16) const
+    {
+        return std::visit(
+            [&](const auto &pc)
+            {
+                return pc.get(
+                    pos16.x + pos16.z * BlockExtent + pos16.y * BlockExtentSq);
+            },
+            m_block_states);
     }
 
     void set_block_single_value(uint32_t value)
     {
-        m_block_states.set_single_value(value);
-        m_block_count = is_air(value) ? 16 * 16 * 16 : 0;
-        m_fluid_count = is_fluid(value) ? 16 * 16 * 16 : 0;
+        m_block_states = SingleValuedPC { value };
+        m_block_count = blockstates::is_air(value) ? 0 : BlockExtentCub;
+        m_fluid_count = blockstates::is_fluid(value) ? BlockExtentCub : 0;
     }
 
-    void set_block_paletted(
-        Vec3<int> pos16, std::span<const uint32_t> palette, size_t index)
+    void set_block_indirect(
+        Vec3<int> pos16, std::span<const uint32_t> palette, size_t palette_idx)
     {
-        inc_dec_counts(m_block_states.get(pos16), palette[index]);
-        m_block_states.set_paletted(pos16, palette, index);
+        if (auto *indirect = std::get_if<IndirectPC>(&m_block_states);
+            indirect && indirect->test_palette(palette))
+        {
+            inc_dec_counts(get_block(pos16), palette[palette_idx]);
+            indirect->set(
+                pos16.x + pos16.z * BlockExtent + pos16.y * BlockExtentSq,
+                palette_idx);
+            return;
+        }
+        set_block_direct(pos16, palette[palette_idx]);
     }
 
     void set_block_direct(Vec3<int> pos16, uint16_t value)
     {
-        inc_dec_counts(m_block_states.get(pos16), value);
-        m_block_states.set_direct(pos16, value);
-    }
-
-    uint32_t get_biome(Vec3<int> pos4) const { return m_biomes.get(pos4); }
-
-    void set_biome_single_value(uint32_t value)
-    {
-        m_biomes.set_single_value(value);
-    }
-
-    void set_biome_paletted(
-        Vec3<int> pos4, std::span<const uint32_t> palette, size_t index)
-    {
-        m_biomes.set_paletted(pos4, palette, index);
-    }
-
-    void set_biome_direct(Vec3<int> pos4, uint8_t value)
-    {
-        m_biomes.set_direct(pos4, value);
+        inc_dec_counts(get_block(pos16), value);
+        (*convert_to_direct().data)[pos16.x + pos16.z * BlockExtent
+            + pos16.y * BlockExtentSq] = value;
     }
 
     auto serialize(auto it)
     {
         it = write_number(it, m_block_count);
         it = write_number(it, m_fluid_count);
-        it = m_block_states.serialize(it);
-        it = m_biomes.serialize(it);
+        std::visit(
+            [&](const auto &pc) { it = pc.serialize(it); }, m_block_states);
+        // TODO: implement biomes changing
+        it = write_number<uint8_t>(it, 0x00); // Single Valued
+        it = write_var<uint32_t>(it, 40); // hardcoded plains
         return it;
     }
 
 private:
+    DirectPC &convert_to_direct()
+    {
+        if (auto *indirect = std::get_if<IndirectPC>(&m_block_states))
+        {
+            DirectPC direct;
+            for (size_t i { }; i < BlockExtentCub; ++i)
+                (*direct.data)[i] = indirect->get(i);
+            m_block_states = std::move(direct);
+        }
+        else if (auto *sv = std::get_if<SingleValuedPC>(&m_block_states))
+        {
+            DirectPC direct;
+            for (size_t i { }; i < BlockExtentCub; ++i)
+                (*direct.data)[i] = sv->value;
+            m_block_states = std::move(direct);
+        }
+        return std::get<DirectPC>(m_block_states);
+    }
+
     void inc_dec_counts(
         uint32_t previous_block_state, uint32_t next_block_state)
     {
-        bool is_previous_air = is_air(previous_block_state),
-             is_previous_fluid = is_fluid(previous_block_state),
-             is_next_air = is_air(next_block_state),
-             is_next_fluid = is_fluid(next_block_state);
+        bool is_previous_air = blockstates::is_air(previous_block_state),
+             is_previous_fluid = blockstates::is_fluid(previous_block_state),
+             is_next_air = blockstates::is_air(next_block_state),
+             is_next_fluid = blockstates::is_fluid(next_block_state);
 
         if (is_previous_air && !is_next_air)
-            --m_block_count;
-        else if (!is_previous_air && is_next_air)
             ++m_block_count;
+        else if (!is_previous_air && is_next_air)
+            --m_block_count;
+
         if (is_previous_fluid && !is_next_fluid)
             --m_fluid_count;
         else if (!is_previous_fluid && is_next_fluid)
@@ -259,8 +240,7 @@ private:
     }
 
 private:
-    PalettedContainer<16, 4, 8, 15> m_block_states;
-    PalettedContainer<4, 1, 3, 7> m_biomes;
+    PalettedContainer m_block_states;
     uint16_t m_block_count { }, m_fluid_count { };
 };
 
@@ -269,12 +249,13 @@ private:
 export class Chunk
 {
 public:
-    decltype(auto) get_section_by_index(this auto &&self, size_t index)
+    [[nodiscard]] decltype(auto) get_section_by_index(
+        this auto &&self, size_t index)
     {
         return self.m_sections[index];
     }
 
-    auto *get_section_by_y(this auto &&self, int y)
+    [[nodiscard]] auto *get_section_by_block_y(this auto &&self, int y)
     {
         if (y < -64 || y >= 320)
             return nullptr;
@@ -286,25 +267,163 @@ public:
     Chunk *get_positive_z_neighbor() { return m_positive_z_neighbor; }
     Chunk *get_negative_z_neighbor() { return m_negative_z_neighbor; }
 
+    [[nodiscard]] const auto &get_xz() { return m_pos; }
+
 private:
-    Chunk(std::array<ChunkSection, 24> &&sections, Chunk *px, Chunk *nx,
-        Chunk *pz, Chunk *nz)
-        : m_sections(std::move(sections))
-        , m_positive_x_neighbor(px)
-        , m_negative_x_neighbor(nx)
-        , m_positive_z_neighbor(pz)
-        , m_negative_z_neighbor(nz)
+    template <size_t N> friend class ChunkPool;
+
+    Chunk() = default;
+
+    void reset()
     {
+        for (auto &section : m_sections)
+            section.set_block_single_value(0);
+
+        if (m_positive_x_neighbor)
+            m_positive_x_neighbor->m_negative_x_neighbor = nullptr;
+
+        if (m_negative_x_neighbor)
+            m_negative_x_neighbor->m_positive_x_neighbor = nullptr;
+
+        if (m_positive_z_neighbor)
+            m_positive_z_neighbor->m_negative_z_neighbor = nullptr;
+
+        if (m_negative_z_neighbor)
+            m_negative_z_neighbor->m_positive_z_neighbor = nullptr;
+
+        m_refs = 0;
+        m_pos = { };
     }
 
 private:
     std::array<ChunkSection, 24> m_sections;
     Chunk *m_positive_x_neighbor { }, *m_negative_x_neighbor { },
         *m_positive_z_neighbor { }, *m_negative_z_neighbor { };
+    size_t m_refs { };
+    Vec2<int32_t> m_pos { };
 };
 
 /******************************************************************************/
 
-class ChunkPool
+struct XFastZSlowCompare
 {
+    [[nodiscard]] bool operator()(
+        Vec2<int32_t> lhs, Vec2<int32_t> rhs) const noexcept
+    {
+        return lhs.z < rhs.z || (lhs.z == rhs.z && lhs.x < rhs.x);
+    }
 };
+
+using PosToChunkMap = boost::container::flat_map<Vec2<int32_t>,
+    std::reference_wrapper<Chunk>, XFastZSlowCompare>;
+
+constexpr auto lower_bound_map_cmp =
+    [](PosToChunkMap::const_reference pair, const PosToChunkMap::key_type &key)
+{ return XFastZSlowCompare()(pair.first, key); };
+
+export template <size_t N> class ChunkPool : private BasePool<N>
+{
+public:
+    ChunkPool()
+        : m_chunks(new std::array<Chunk, N> { })
+    {
+    }
+
+    [[nodiscard]] Chunk *get(Vec2<int32_t> pos) const
+    {
+        auto it = m_pos_to_chunk_map.find(pos);
+        if (it == m_pos_to_chunk_map.end())
+            return nullptr;
+        return &it->second.get();
+    }
+
+    [[nodiscard]] Chunk *acquire(Vec2<int32_t> pos)
+    {
+        auto it = m_pos_to_chunk_map.find(pos);
+        if (it != m_pos_to_chunk_map.end())
+        {
+            ++it->second.get().m_refs;
+            return &it->second.get();
+        }
+
+        size_t idx = BasePool<N>::allocate();
+        if (idx == N)
+            return nullptr;
+
+        auto &chunk = (*m_chunks)[idx];
+        it = m_pos_to_chunk_map.emplace(pos, std::ref(chunk)).first;
+
+        if (it != m_pos_to_chunk_map.begin())
+        {
+            auto prev_it = std::prev(it);
+            if (prev_it->first.x == pos.x - 1 && prev_it->first.z == pos.z)
+            {
+                chunk.m_negative_x_neighbor = &prev_it->second.get();
+                prev_it->second.get().m_positive_x_neighbor = &chunk;
+            }
+
+            auto nz_it = std::lower_bound(m_pos_to_chunk_map.begin(), prev_it,
+                Vec2(pos.x, pos.z - 1), lower_bound_map_cmp);
+            if (nz_it != prev_it)
+            {
+                chunk.m_negative_z_neighbor = &nz_it->second.get();
+                nz_it->second.get().m_positive_z_neighbor = &chunk;
+            }
+        }
+
+        auto next_it = std::next(it);
+        if (next_it != m_pos_to_chunk_map.end() && next_it->first.x == pos.x + 1
+            && next_it->first.z == pos.z)
+        {
+            chunk.m_positive_x_neighbor = &next_it->second.get();
+            next_it->second.get().m_negative_x_neighbor = &chunk;
+        }
+
+        auto pz_it
+            = std::lower_bound(std::next(next_it), m_pos_to_chunk_map.end(),
+                Vec2(pos.x, pos.z + 1), lower_bound_map_cmp);
+        if (pz_it != m_pos_to_chunk_map.end())
+        {
+            chunk.m_positive_z_neighbor = &pz_it->second.get();
+            pz_it->second.get().m_negative_z_neighbor = &chunk;
+        }
+
+        chunk.m_refs = 1;
+        chunk.m_pos = pos;
+        return &chunk;
+    }
+
+    void acquire(Chunk &chunk)
+    {
+        assert(&chunk >= m_chunks->data() && &chunk < m_chunks->data() + N
+            && chunk.m_refs != 0);
+        ++chunk.m_refs;
+    }
+
+    void release(Chunk &chunk)
+    {
+        assert(&chunk >= m_chunks->data() && &chunk < m_chunks->data() + N
+            && chunk.m_refs != 0);
+
+        if (--chunk.m_refs == 0)
+        {
+            BasePool<N>::free(&chunk - m_chunks->data());
+            m_pos_to_chunk_map.erase(chunk.m_pos);
+            chunk.reset();
+        }
+    }
+
+private:
+    std::unique_ptr<std::array<Chunk, N>> m_chunks;
+    PosToChunkMap m_pos_to_chunk_map;
+};
+
+/******************************************************************************/
+
+template class ChunkPool<16384>;
+
+export [[nodiscard]] auto &get_global_chunk_pool()
+{
+    static ChunkPool<16384> pool;
+    return pool;
+}

@@ -33,6 +33,7 @@ target_sources(actualklasterkraft
         src/statecoroutines/play.cppm
         src/statecoroutines/status.cppm
         src/world/autogentest.cppm
+        src/world/blockstates.cppm
         src/world/chunk.cppm
         src/world/math.cppm
         src/world/player.cppm
