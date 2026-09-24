@@ -15,13 +15,8 @@ import actualklasterkraft.world.chunk;
 import actualklasterkraft.world.math;
 import actualklasterkraft.world.player;
 
-int main()
+void prepare_world()
 {
-    std::println("Hello World!");
-
-    boost::asio::io_context io;
-    emplace_global_player_pool(io.get_executor());
-
     Chunk *central_chunk = get_global_chunk_pool().acquire({ 0, 0 });
     for (int32_t x = -1; x <= 1; ++x)
     {
@@ -61,6 +56,14 @@ int main()
             }
         }
     }
+}
+
+int main()
+{
+    std::println("Hello World!");
+
+    prepare_world();
+    boost::asio::io_context io;
 
     Acceptor acceptor(io.get_executor(), 25565);
     acceptor.start();

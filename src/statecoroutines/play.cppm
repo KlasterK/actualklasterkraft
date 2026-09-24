@@ -34,7 +34,6 @@ using asio::experimental::channel;
 using asio::ip::tcp;
 using ISI = std::istreambuf_iterator<char>;
 using OSI = std::ostreambuf_iterator<char>;
-using CanSig = asio::cancellation_signal;
 
 static std::mt19937 g_rng { std::random_device { }() };
 static std::uniform_int_distribution<uint64_t> g_u64_dist { };
@@ -449,7 +448,7 @@ void send_yellow_message_to_all(std::string_view message)
 asio::awaitable<void> chat_message_loop(Transport &transport,
     asio::streambuf &sb, PacketRouter &packet_router, Player &player)
 {
-    Signal<void(sys::error_code)> signal(transport.socket.get_executor());
+    Signal<void(sys::error_code)> signal;
     auto sub = packet_router.subscribe(
         0x09, [&](sys::error_code ec, uint32_t) { signal.emit(ec); });
 
@@ -659,8 +658,7 @@ asio::awaitable<void> statecoroutines::play(
 
     // Await for Confirm Teleportation
     {
-        Signal<void(sys::error_code)> tmp_signal(
-            transport.socket.get_executor());
+        Signal<void(sys::error_code)> tmp_signal;
         auto sub = packet_router.subscribe(
             0x00, [&](sys::error_code ec, uint32_t) { tmp_signal.emit(ec); });
 

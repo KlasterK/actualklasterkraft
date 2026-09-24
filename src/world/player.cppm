@@ -123,18 +123,11 @@ public:
 private:
     template <size_t N> friend class PlayerPool;
 
-    Player(uint32_t eid, asio::any_io_executor io)
-        : m_eid(eid)
-        , m_on_posrot_update(io)
-        , m_on_about_to_die(io)
-        , m_on_player_enter_simulation_distance(io)
-        , m_on_player_exit_simulation_distance(io)
-        , m_on_chat_message(io)
-    {
-    }
+    Player() = default;
 
-    void spawn(PosRot posrot, SpawnInfo &&spawn_info)
+    void spawn(uint32_t eid, PosRot posrot, SpawnInfo &&spawn_info)
     {
+        m_eid = eid;
         m_state = State::Alive;
         m_posrot.partial_update(posrot);
         m_posrot.is_position_present = true;
@@ -166,7 +159,7 @@ private:
     }
 
 private:
-    uint32_t m_eid;
+    uint32_t m_eid { };
     State m_state { State::Dead };
     PosRot m_posrot;
     SpawnInfo m_spawn_info;
@@ -195,15 +188,8 @@ private:
     }
 
 public:
-    PlayerPool(asio::any_io_executor io)
-        : m_players(
-              [&]<size_t... Is>(std::index_sequence<Is...>)
-              {
-                  return new std::array<Player, N> { Player(
-                      EIDBase + Is, io)... };
-              }(std::make_index_sequence<N>()))
-        , m_on_player_spawn(io)
-        , m_on_player_about_to_die(io)
+    PlayerPool()
+        : m_players(new std::array<Player, N> { })
     {
     }
 
@@ -214,7 +200,7 @@ public:
             return nullptr;
 
         auto &player = (*m_players)[idx];
-        player.spawn(std::move(posrot), std::move(spawn_info));
+        player.spawn(EIDBase + idx, std::move(posrot), std::move(spawn_info));
         m_on_player_spawn.emit({ }, &player);
         return &player;
     }
@@ -271,16 +257,8 @@ private:
 // forces clangd to lint properly
 template class PlayerPool<256>;
 
-std::optional<PlayerPool<256>> g_player_pool;
-
-export void emplace_global_player_pool(asio::any_io_executor io)
-{
-    g_player_pool.emplace(io);
-}
-
 export auto &get_global_player_pool()
 {
-    assert(g_player_pool
-        && "get_global_player_pool() called before emplace_global_player_pool()");
-    return *g_player_pool;
+    static PlayerPool<256> pool;
+    return pool;
 }

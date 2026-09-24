@@ -1,8 +1,8 @@
 module;
 #include <boost/asio.hpp>
+#include <boost/container/small_vector.hpp>
 #include <concepts>
 #include <tuple>
-#include <vector>
 export module actualklasterkraft.pubsub;
 
 namespace asio = boost::asio;
@@ -15,10 +15,7 @@ template <typename... Args>
 class Signal<void(Args...)>
 {
 public:
-    Signal(asio::any_io_executor io)
-        : m_io(io)
-    {
-    }
+    Signal() { m_awaiters.reserve(1); }
 
     Signal(const Signal &) = delete;
     Signal(Signal &&) = default;
@@ -71,6 +68,7 @@ public:
     }
 
 private:
-    std::vector<asio::any_completion_handler<void(Args...)>> m_awaiters;
-    asio::any_io_executor m_io;
+    boost::container::small_vector<asio::any_completion_handler<void(Args...)>,
+        1>
+        m_awaiters;
 };
