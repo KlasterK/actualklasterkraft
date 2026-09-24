@@ -1,6 +1,7 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/system.hpp>
+#include <exception>
 #include <print>
 export module actualklasterkraft.acceptor;
 
@@ -44,7 +45,7 @@ public:
 
                 asio::co_spawn(m_acceptor.get_executor(),
                     statecoroutines::handshake(std::move(transport)),
-                    asio::detached);
+                    detached_rethrow_token);
 
                 start();
             });

@@ -21,7 +21,7 @@ import actualklasterkraft.protocolprimitives;
 import actualklasterkraft.pubsub;
 import actualklasterkraft.templates;
 import actualklasterkraft.transport;
-import actualklasterkraft.world.autogentest;
+import actualklasterkraft.world.chunk;
 import actualklasterkraft.world.math;
 import actualklasterkraft.world.player;
 
@@ -582,7 +582,7 @@ asio::awaitable<bool> init_tab_list(Transport &transport, Player &self)
     }
 
     asio::co_spawn(transport.socket.get_executor(),
-        tab_list_loop(transport, self), asio::detached);
+        tab_list_loop(transport, self), detached_rethrow_token);
 
     co_return true;
 }
@@ -622,7 +622,8 @@ asio::awaitable<void> statecoroutines::play(
     packet_router.begin_receiving();
 
     asio::co_spawn(transport.socket.get_executor(),
-        keepalive_loop(transport, streambuf, packet_router), asio::detached);
+        keepalive_loop(transport, streambuf, packet_router),
+        detached_rethrow_token);
 
     // Client Tick End 'no subscribers' warning spams stdout too hard, it's sent each tick
     auto client_tick_end_sub
@@ -699,7 +700,7 @@ asio::awaitable<void> statecoroutines::play(
         asio::co_spawn(transport.socket.get_executor(),
             send_system_chat_message(
                 transport, std::move(text_component), is_overlay),
-            asio::detached);
+            detached_rethrow_token);
 
         p->wait_chat_message(when_saw_chat_message);
     };
@@ -708,7 +709,7 @@ asio::awaitable<void> statecoroutines::play(
     // Outcoming messages soaking
     asio::co_spawn(transport.socket.get_executor(),
         chat_message_loop(transport, streambuf, packet_router, *player),
-        asio::detached);
+        detached_rethrow_token);
 
     // Hello, player!
     send_yellow_message_to_all(
@@ -749,31 +750,43 @@ asio::awaitable<void> statecoroutines::play(
         co_return co_await disconnect::play(
             transport, disconnect::fmt_desync(ec, "Set Centre Chunk"));
 
-    constexpr std::array center_block_states { chunkgen::GrassBlock,
-        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-        chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-        chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-        chunkgen::GrassBlock, chunkgen::Air, chunkgen::GrassBlock,
-        chunkgen::Air, chunkgen::GrassBlock, chunkgen::Air,
-        chunkgen::GrassBlock, chunkgen::Air };
+    std::array<Chunk *, 3> z0_chunks;
+    z0_chunks[1] = get_global_chunk_pool().get({ 0, 0 });
+    z0_chunks[0] = z0_chunks[1]->get_negative_x_neighbor();
+    z0_chunks[2] = z0_chunks[1]->get_positive_x_neighbor();
 
     for (int32_t x = -1; x < 2; ++x)
     {
         for (int32_t z = -1; z < 2; ++z)
         {
-            auto [buf1, buf2]
-                = chunkgen::single_valued_sectioned_chunk({ x, z },
-                    x == 0 && z == 0 ? center_block_states
-                                     : chunkgen::AirBlockStates);
+            Chunk *chunk { };
+            if (z == -1)
+                chunk = z0_chunks[x + 1]->get_negative_z_neighbor();
+            else if (z == 0)
+                chunk = z0_chunks[x + 1];
+            else
+                chunk = z0_chunks[x + 1]->get_positive_z_neighbor();
+
+            boost::container::static_vector<uint8_t, 32> buf1;
+            buf1.push_back(0x2D); // Chunk Data & Update Light
+            write_number(std::back_inserter(buf1), x);
+            write_number(std::back_inserter(buf1), z);
+            chunkserialization::heightmaps(std::back_inserter(buf1), *chunk);
+
+            boost::container::static_vector<uint8_t, 4096> buf2;
+            chunkserialization::data(std::back_inserter(buf2), *chunk);
+            write_var<uint32_t>(std::back_inserter(buf1), buf2.size());
+
+            chunkserialization::block_entities(
+                std::back_inserter(buf2), *chunk);
+            chunkserialization::light(std::back_inserter(buf2), *chunk);
 
             ec = co_await packetops::put_va(transport, buf1, buf2);
             if (is_normal_shutdown(ec))
                 co_return;
             else if (ec)
                 co_return co_await disconnect::play(transport,
-                    disconnect::fmt_desync(ec, "Update Chunk and Light Data"));
+                    disconnect::fmt_desync(ec, "Chunk Data & Update Light"));
         }
     }
 
@@ -784,7 +797,8 @@ asio::awaitable<void> statecoroutines::play(
 
         other.notify_player_entered_simulation_distance(*player);
         asio::co_spawn(transport.socket.get_executor(),
-            pull_posrot_loop(transport, *player, other), asio::detached);
+            pull_posrot_loop(transport, *player, other),
+            detached_rethrow_token);
 
         co_await send_spawn_entity_of_player(transport, other);
     }
@@ -797,10 +811,12 @@ asio::awaitable<void> statecoroutines::play(
 
         other->notify_player_entered_simulation_distance(*player);
         asio::co_spawn(transport.socket.get_executor(),
-            pull_posrot_loop(transport, *player, *other), asio::detached);
+            pull_posrot_loop(transport, *player, *other),
+            detached_rethrow_token);
 
         asio::co_spawn(transport.socket.get_executor(),
-            send_spawn_entity_of_player(transport, *other), asio::detached);
+            send_spawn_entity_of_player(transport, *other),
+            detached_rethrow_token);
 
         player->wait_player_enter_simulation_distance(when_saw_other_player);
     };
@@ -813,7 +829,8 @@ asio::awaitable<void> statecoroutines::play(
             return;
 
         asio::co_spawn(transport.socket.get_executor(),
-            send_remove_entity_of_player(transport, *other), asio::detached);
+            send_remove_entity_of_player(transport, *other),
+            detached_rethrow_token);
         player->wait_player_exit_simulation_distance(when_unsaw_other_player);
     };
     player->wait_player_exit_simulation_distance(when_unsaw_other_player);

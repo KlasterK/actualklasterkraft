@@ -76,6 +76,6 @@ export namespace statecoroutines
         asio::co_spawn(transport.socket.get_executor(),
             statecoroutines::play(std::move(transport), std::move(player_name),
                 std::move(player_uuid)),
-            asio::detached);
+            detached_rethrow_token);
     }
 }

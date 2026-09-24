@@ -76,6 +76,6 @@ export namespace statecoroutines
             co_return fail();
 
         asio::co_spawn(transport.socket.get_executor(), std::move(next_coro),
-            asio::detached);
+            detached_rethrow_token);
     }
 }

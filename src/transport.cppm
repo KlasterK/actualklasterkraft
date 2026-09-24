@@ -20,3 +20,18 @@ export struct Transport
     {
     }
 };
+
+export const auto detached_rethrow_token = [](std::exception_ptr exc_ptr)
+{
+    if (exc_ptr)
+    {
+        try
+        {
+            std::rethrow_exception(exc_ptr);
+        }
+        catch (const std::exception &exc)
+        {
+            std::println("what(): {}", exc.what());
+        }
+    }
+};

@@ -55,7 +55,7 @@ struct DirectPC
     {
         it = write_number(it, uint8_t(15));
         it = encode_bit_entries(
-            it, 15, [this](size_t idx) { return get(idx); });
+            it, 15, [this](size_t idx) { return (*data)[idx]; });
         return it;
     }
 };
@@ -80,7 +80,8 @@ struct IndirectPC
     std::unique_ptr<uint8_t[]> data;
 
     IndirectPC(std::span<const uint32_t> palette)
-        : data(std::make_unique<uint8_t[]>(
+        : palette(palette)
+        , data(std::make_unique<uint8_t[]>(
               palette.size() < 16 ? BlockExtentCub / 2 : BlockExtentCub))
     {
         assert(palette.size() < 256);
@@ -103,19 +104,27 @@ struct IndirectPC
         it = write_var<uint32_t>(it, palette.size());
         for (uint32_t entry : palette)
             it = write_var<uint32_t>(it, entry);
-        it = encode_bit_entries(
-            it, bpe, [this](size_t idx) { return get(idx); });
+        it = encode_bit_entries(it, bpe,
+            [this](size_t idx) -> uint8_t
+            {
+                if (palette.size() >= 16)
+                    return data[idx];
+                if (idx % 2 == 0)
+                    return data[idx / 2] & 0x0F;
+                return data[idx / 2] >> 4;
+            });
 
         return it;
     }
 
-    void set(size_t idx, uint8_t value)
+    void set(size_t idx, uint8_t palette_idx)
     {
         if (palette.size() >= 16)
-            data[idx] = value;
+            data[idx] = palette_idx;
         if (idx % 2 == 0)
-            data[idx / 2] = (data[idx / 2] & 0xF0) | value;
-        data[idx / 2] = (data[idx / 2] & 0x0F) | (value << 4);
+            data[idx / 2] = (data[idx / 2] & 0xF0) | palette_idx;
+        else
+            data[idx / 2] = (data[idx / 2] & 0x0F) | (palette_idx << 4);
     }
 
     bool test_palette(std::span<const uint32_t> other) const
@@ -249,17 +258,31 @@ private:
 export class Chunk
 {
 public:
-    [[nodiscard]] decltype(auto) get_section_by_index(
-        this auto &&self, size_t index)
+    static constexpr size_t SectionCount = 24;
+
+public:
+    [[nodiscard]] ChunkSection &get_section_by_index(size_t index)
     {
-        return self.m_sections[index];
+        return m_sections[index];
     }
 
-    [[nodiscard]] auto *get_section_by_block_y(this auto &&self, int y)
+    [[nodiscard]] const ChunkSection &get_section_by_index(size_t index) const
+    {
+        return m_sections[index];
+    }
+
+    [[nodiscard]] ChunkSection *get_section_by_block_y(int y)
     {
         if (y < -64 || y >= 320)
             return nullptr;
-        return &self.m_sections[(y + 64) / 16];
+        return &m_sections[(y + 64) / 16];
+    }
+
+    [[nodiscard]] const ChunkSection *get_section_by_block_y(int y) const
+    {
+        if (y < -64 || y >= 320)
+            return nullptr;
+        return &m_sections[(y + 64) / 16];
     }
 
     Chunk *get_positive_x_neighbor() { return m_positive_x_neighbor; }
@@ -296,7 +319,7 @@ private:
     }
 
 private:
-    std::array<ChunkSection, 24> m_sections;
+    std::array<ChunkSection, SectionCount> m_sections;
     Chunk *m_positive_x_neighbor { }, *m_negative_x_neighbor { },
         *m_positive_z_neighbor { }, *m_negative_z_neighbor { };
     size_t m_refs { };
@@ -362,9 +385,9 @@ public:
                 prev_it->second.get().m_positive_x_neighbor = &chunk;
             }
 
-            auto nz_it = std::lower_bound(m_pos_to_chunk_map.begin(), prev_it,
+            auto nz_it = std::lower_bound(m_pos_to_chunk_map.begin(), it,
                 Vec2(pos.x, pos.z - 1), lower_bound_map_cmp);
-            if (nz_it != prev_it)
+            if (nz_it != it)
             {
                 chunk.m_negative_z_neighbor = &nz_it->second.get();
                 nz_it->second.get().m_positive_z_neighbor = &chunk;
@@ -379,9 +402,8 @@ public:
             next_it->second.get().m_negative_x_neighbor = &chunk;
         }
 
-        auto pz_it
-            = std::lower_bound(std::next(next_it), m_pos_to_chunk_map.end(),
-                Vec2(pos.x, pos.z + 1), lower_bound_map_cmp);
+        auto pz_it = std::lower_bound(next_it, m_pos_to_chunk_map.end(),
+            Vec2(pos.x, pos.z + 1), lower_bound_map_cmp);
         if (pz_it != m_pos_to_chunk_map.end())
         {
             chunk.m_positive_z_neighbor = &pz_it->second.get();
@@ -426,4 +448,42 @@ export [[nodiscard]] auto &get_global_chunk_pool()
 {
     static ChunkPool<16384> pool;
     return pool;
+}
+
+/******************************************************************************/
+
+export namespace chunkserialization
+{
+    auto heightmaps(auto it, Chunk &)
+    {
+        // TODO: implement proper heightmaps serialisation
+        return write_var<uint32_t>(it, 0);
+    }
+
+    auto data(auto it, Chunk &chunk)
+    {
+        for (size_t i { }; i < Chunk::SectionCount; ++i)
+        {
+            it = chunk.get_section_by_index(i).serialize(it);
+        }
+        return it;
+    }
+
+    auto block_entities(auto it, Chunk &)
+    {
+        // TODO: when block entities will be added, add their serialisation
+        return write_var<uint32_t>(it, 0);
+    }
+
+    auto light(auto it, Chunk &)
+    {
+        // TODO: when light will be added, add its serialisation
+        *it++ = 0; // Sky Light Mask
+        *it++ = 0; // Block Light Mask
+        *it++ = 0; // Empty Sky Light Mask
+        *it++ = 0; // Empty Block Light Mask
+        *it++ = 0; // Sky Lights Arrays
+        *it++ = 0; // Block Lights Arrays
+        return it;
+    }
 }
