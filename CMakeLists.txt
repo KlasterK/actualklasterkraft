@@ -9,6 +9,12 @@ option(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
     OFF
 )
 
+option(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES
+    "Enable fixes for building with Microsoft Visual C++ toolchain
+        (cl.exe is not supported but Clang is supported)"
+    OFF
+)
+
 option(ACTUALKLASTERKRAFT_ENABLE_PCH
     "Enable precompiling headers.
         It really speeds up building but it might be unstable
@@ -17,26 +23,12 @@ option(ACTUALKLASTERKRAFT_ENABLE_PCH
     OFF
 )
 
-option(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC
-    "Enable fixes for Boost and OpenSSL when building using
-        Microsoft Visual C++ toolchain (cl.exe is not supported
-        but Clang is supported)"
-    ON
-)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND WIN32)
-    set(WIN32_CLANG_TARGET "x86_64-pc-windows-msvc")
-    add_compile_options(-target ${WIN32_CLANG_TARGET})
-    add_link_options(-target ${WIN32_CLANG_TARGET})
-    add_link_options("-Xlinker" "/nodefaultlib:libcmt")
-endif()
-
-if(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC)
+if(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES)
     set(Boost_COMPILER "-vc145")
     find_package(Boost REQUIRED COMPONENTS json)
 
@@ -92,13 +84,6 @@ target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(actualklasterkraft PRIVATE -Wall -Wextra -fdiagnostics-color=always)
-    
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/boost_fix.h" "
-        #pragma once
-        #define BOOST_ALL_NO_LIB
-        #define BOOST_JSON_STATIC_LINK
-    ")
-    target_compile_options(actualklasterkraft PRIVATE "-include" "${CMAKE_CURRENT_BINARY_DIR}/boost_fix.h")
 endif()
 
 if(WIN32)
@@ -109,6 +94,14 @@ if(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32)
     target_compile_definitions(actualklasterkraft PRIVATE 
         ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
     )
+endif()
+
+if(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES)
+    set(WIN32_CLANG_TARGET "x86_64-pc-windows-msvc")
+    target_compile_options(actualklasterkraft PRIVATE -target ${WIN32_CLANG_TARGET})
+    target_link_options(actualklasterkraft PRIVATE -target ${WIN32_CLANG_TARGET})
+    target_link_options(actualklasterkraft PRIVATE "-Xlinker" "/nodefaultlib:libcmt")
+    target_compile_options(actualklasterkraft PRIVATE "-include" "src/visualcxxboostfix.hpp")
 endif()
 
 if(ACTUALKLASTERKRAFT_ENABLE_PCH)
