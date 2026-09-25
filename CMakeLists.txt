@@ -1,10 +1,17 @@
 cmake_minimum_required(VERSION 3.30)
+
 project(ActualKlasterKraft VERSION 0.1.0 LANGUAGES C CXX)
 
 option(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
     "Implement internal terminal functions used by std::print
         and friends (std::__open_terminal, std::__write_to_terminal)
         using Win32 API"
+    OFF
+)
+
+option(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES
+    "Enable fixes for building with Microsoft Visual C++ toolchain
+        (cl.exe is not supported but Clang is supported)"
     OFF
 )
 
@@ -16,19 +23,12 @@ option(ACTUALKLASTERKRAFT_ENABLE_PCH
     OFF
 )
 
-option(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC
-    "Enable fixes for Boost and OpenSSL when building using
-        Microsoft Visual C++ toolchain (cl.exe is not supported
-        but Clang is supported)"
-    OFF
-)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
-if(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC)
+if(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES)
     set(Boost_COMPILER "-vc145")
     find_package(Boost REQUIRED COMPONENTS json)
 
@@ -94,6 +94,14 @@ if(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32)
     target_compile_definitions(actualklasterkraft PRIVATE 
         ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
     )
+endif()
+
+if(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES)
+    set(WIN32_CLANG_TARGET "x86_64-pc-windows-msvc")
+    target_compile_options(actualklasterkraft PRIVATE -target ${WIN32_CLANG_TARGET})
+    target_link_options(actualklasterkraft PRIVATE -target ${WIN32_CLANG_TARGET})
+    target_link_options(actualklasterkraft PRIVATE "-Xlinker" "/nodefaultlib:libcmt")
+    target_compile_options(actualklasterkraft PRIVATE "-include" "src/visualcxxboostfix.hpp")
 endif()
 
 if(ACTUALKLASTERKRAFT_ENABLE_PCH)

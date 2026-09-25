@@ -9,6 +9,7 @@ module;
 #include <string_view>
 #include <tuple>
 #include <numbers>
+#include <algorithm>
 export module actualklasterkraft.protocolprimitives;
 
 import actualklasterkraft.errc;
