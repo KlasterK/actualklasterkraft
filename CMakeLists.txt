@@ -1,14 +1,5 @@
 cmake_minimum_required(VERSION 3.30)
 
-# example
-# set(CMAKE_MAKE_PROGRAM "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" CACHE FILEPATH "Path to Ninja" FORCE)
-# set(CMAKE_C_COMPILER "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/clang.exe" CACHE FILEPATH "Path to Clang C" FORCE)
-# set(CMAKE_CXX_COMPILER "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/clang++.exe" CACHE FILEPATH "Path to Clang CXX" FORCE)
-# set(CMAKE_RC_COMPILER "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/llvm-rc.exe" CACHE FILEPATH "Path to Resource Compiler" FORCE)
-# set(BOOST_ROOT "C:/boost_1_92_0" CACHE PATH "Path to Boost root folder")
-# set(Boost_DIR "${BOOST_ROOT}/stage/lib/cmake/Boost-1.92.0" CACHE PATH "Path to Boost CMake configs")
-# set(OPENSSL_ROOT_DIR "C:/OpenSSL1" CACHE PATH "Path to OpenSSL root folder")
-
 project(ActualKlasterKraft VERSION 0.1.0 LANGUAGES C CXX)
 
 option(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
@@ -30,7 +21,7 @@ option(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC
     "Enable fixes for Boost and OpenSSL when building using
         Microsoft Visual C++ toolchain (cl.exe is not supported
         but Clang is supported)"
-    OFF
+    ON
 )
 
 set(CMAKE_CXX_STANDARD 23)
