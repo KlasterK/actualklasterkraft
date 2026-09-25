@@ -8,6 +8,7 @@ module;
 #include <optional>
 #include <ranges>
 #include <utility>
+#include <algorithm>
 export module actualklasterkraft.world.player;
 
 import actualklasterkraft.basepool;

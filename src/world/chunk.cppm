@@ -9,6 +9,7 @@ module;
 #include <memory>
 #include <ranges>
 #include <span>
+#include <variant>
 export module actualklasterkraft.world.chunk;
 
 import actualklasterkraft.basepool;

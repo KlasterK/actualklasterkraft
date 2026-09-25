@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.30)
+
+# example
+# set(CMAKE_MAKE_PROGRAM "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" CACHE FILEPATH "Path to Ninja" FORCE)
+# set(CMAKE_C_COMPILER "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/clang.exe" CACHE FILEPATH "Path to Clang C" FORCE)
+# set(CMAKE_CXX_COMPILER "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/clang++.exe" CACHE FILEPATH "Path to Clang CXX" FORCE)
+# set(CMAKE_RC_COMPILER "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/llvm-rc.exe" CACHE FILEPATH "Path to Resource Compiler" FORCE)
+
 project(ActualKlasterKraft VERSION 0.1.0 LANGUAGES C CXX)
 
 option(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
@@ -16,38 +23,40 @@ option(ACTUALKLASTERKRAFT_ENABLE_PCH
     OFF
 )
 
-option(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC
-    "Enable fixes for Boost and OpenSSL when building using
-        Microsoft Visual C++ toolchain (cl.exe is not supported
-        but Clang is supported)"
-    OFF
-)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
-if(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC)
-    set(Boost_COMPILER "-vc145")
-    find_package(Boost REQUIRED COMPONENTS json)
-
-    add_library(OpenSSL::Crypto UNKNOWN IMPORTED GLOBAL)
-    set_target_properties(OpenSSL::Crypto PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_ROOT_DIR}/include"
-        IMPORTED_LOCATION             "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD/libcrypto.lib" 
-    )
-
-    add_library(OpenSSL::SSL UNKNOWN IMPORTED GLOBAL)
-    set_target_properties(OpenSSL::SSL PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_ROOT_DIR}/include"
-        IMPORTED_LOCATION             "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD/libssl.lib"    
-        INTERFACE_LINK_LIBRARIES      OpenSSL::Crypto
-    )
-else()
-    find_package(Boost REQUIRED COMPONENTS json)
-    find_package(OpenSSL REQUIRED)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND WIN32)
+    set(WIN32_CLANG_TARGET "x86_64-pc-windows-msvc")
+    add_compile_options(-target ${WIN32_CLANG_TARGET})
+    add_link_options(-target ${WIN32_CLANG_TARGET})
+    add_link_options("-Xlinker" "/nodefaultlib:libcmt")
 endif()
+
+set(Boost_DIR "C:/boost_1_92_0/stage/lib/cmake/Boost-1.92.0")
+set(BOOST_ROOT "C:/boost_1_92_0")
+set(OPENSSL_ROOT_DIR "C:/OpenSSL1")
+
+if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(Boost_COMPILER "-vc145")
+endif()
+
+find_package(Boost REQUIRED COMPONENTS json)
+
+add_library(OpenSSL::Crypto UNKNOWN IMPORTED GLOBAL)
+set_target_properties(OpenSSL::Crypto PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_ROOT_DIR}/include"
+    IMPORTED_LOCATION             "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD/libcrypto.lib" 
+)
+
+add_library(OpenSSL::SSL UNKNOWN IMPORTED GLOBAL)
+set_target_properties(OpenSSL::SSL PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_ROOT_DIR}/include"
+    IMPORTED_LOCATION             "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD/libssl.lib"    
+    INTERFACE_LINK_LIBRARIES      OpenSSL::Crypto
+)
 
 add_executable(actualklasterkraft)
 
@@ -84,6 +93,13 @@ target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(actualklasterkraft PRIVATE -Wall -Wextra -fdiagnostics-color=always)
+    
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/boost_fix.h" "
+        #pragma once
+        #define BOOST_ALL_NO_LIB
+        #define BOOST_JSON_STATIC_LINK
+    ")
+    target_compile_options(actualklasterkraft PRIVATE "-include" "${CMAKE_CURRENT_BINARY_DIR}/boost_fix.h")
 endif()
 
 if(WIN32)
