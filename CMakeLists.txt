@@ -16,15 +16,41 @@ option(ACTUALKLASTERKRAFT_ENABLE_PCH
     OFF
 )
 
+option(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC
+    "Enable fixes for Boost and OpenSSL when building using
+        Microsoft Visual C++ toolchain (cl.exe is not supported
+        but Clang is supported)"
+    OFF
+)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
-find_package(Boost REQUIRED COMPONENTS json)
-find_package(OpenSSL REQUIRED)
+if(ACTUALKLASTERKRAFT_FIX_DEPENDENCIES_MSVC)
+    set(Boost_COMPILER "-vc145")
+    find_package(Boost REQUIRED COMPONENTS json)
+
+    add_library(OpenSSL::Crypto UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(OpenSSL::Crypto PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_ROOT_DIR}/include"
+        IMPORTED_LOCATION             "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD/libcrypto.lib" 
+    )
+
+    add_library(OpenSSL::SSL UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(OpenSSL::SSL PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_ROOT_DIR}/include"
+        IMPORTED_LOCATION             "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD/libssl.lib"    
+        INTERFACE_LINK_LIBRARIES      OpenSSL::Crypto
+    )
+else()
+    find_package(Boost REQUIRED COMPONENTS json)
+    find_package(OpenSSL REQUIRED)
+endif()
 
 add_executable(actualklasterkraft)
+
 target_sources(actualklasterkraft
     PUBLIC FILE_SET CXX_MODULES FILES
         src/statecoroutines/configuration.cppm
@@ -53,6 +79,7 @@ target_sources(actualklasterkraft
     PRIVATE
         src/main.cpp
 )
+
 target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL::Crypto)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
