@@ -1,6 +1,7 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/system.hpp>
+#include <print>
 #include <utility>
 export module actualklasterkraft.transport;
 
@@ -23,15 +24,17 @@ export struct Transport
 
 export const auto detached_rethrow_token = [](std::exception_ptr exc_ptr)
 {
-    if (exc_ptr)
+    if (!exc_ptr)
+        return;
+
+    try
     {
-        try
-        {
-            std::rethrow_exception(exc_ptr);
-        }
-        catch (const std::exception &exc)
-        {
-            std::println("what(): {}", exc.what());
-        }
+        std::rethrow_exception(exc_ptr);
+    }
+    catch (const std::exception &exc)
+    {
+        std::println(
+            "Unhandled exception in a detached async operation!\nWhat: {}",
+            exc.what());
     }
 };

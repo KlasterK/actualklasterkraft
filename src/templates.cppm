@@ -32,9 +32,18 @@ private:
     static consteval size_t tie_return_idx()
     {
         size_t idx { }, result { TieReturnNotFound };
-        ((std::same_as<TieReturnT, Ts>
-                 ? result = (result == TieReturnNotFound ? idx : TieReturnDup)
-                 : ++idx),
+        (
+            [&]
+            {
+                if constexpr (std::same_as<TieReturnT, Ts>)
+                {
+                    if (result == TieReturnNotFound)
+                        result = idx;
+                    else
+                        result = TieReturnDup;
+                }
+                ++idx;
+            }(),
             ...);
         return result;
     }

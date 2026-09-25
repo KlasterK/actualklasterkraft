@@ -348,7 +348,7 @@ export template <size_t N> class ChunkPool : private BasePool<N>
 {
 public:
     ChunkPool()
-        : m_chunks(new std::array<Chunk, N> { })
+        : m_chunks(new Chunk[N])
     {
     }
 
@@ -373,7 +373,7 @@ public:
         if (idx == N)
             return nullptr;
 
-        auto &chunk = (*m_chunks)[idx];
+        auto &chunk = m_chunks[idx];
         it = m_pos_to_chunk_map.emplace(pos, std::ref(chunk)).first;
 
         if (it != m_pos_to_chunk_map.begin())
@@ -417,26 +417,26 @@ public:
 
     void acquire(Chunk &chunk)
     {
-        assert(&chunk >= m_chunks->data() && &chunk < m_chunks->data() + N
+        assert(&chunk >= m_chunks.get() && &chunk < m_chunks.get() + N
             && chunk.m_refs != 0);
         ++chunk.m_refs;
     }
 
     void release(Chunk &chunk)
     {
-        assert(&chunk >= m_chunks->data() && &chunk < m_chunks->data() + N
+        assert(&chunk >= m_chunks.get() && &chunk < m_chunks.get() + N
             && chunk.m_refs != 0);
 
         if (--chunk.m_refs == 0)
         {
-            BasePool<N>::free(&chunk - m_chunks->data());
+            BasePool<N>::free(&chunk - m_chunks.get());
             m_pos_to_chunk_map.erase(chunk.m_pos);
             chunk.reset();
         }
     }
 
 private:
-    std::unique_ptr<std::array<Chunk, N>> m_chunks;
+    std::unique_ptr<Chunk[]> m_chunks;
     PosToChunkMap m_pos_to_chunk_map;
 };
 

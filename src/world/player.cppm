@@ -181,15 +181,15 @@ private:
     static constexpr uint32_t EIDBase = 0;
 
     friend PoolTakenSlotsIterator<PlayerPool>;
-    Player &pool_iterator_dereference(size_t idx) { return (*m_players)[idx]; }
+    Player &pool_iterator_dereference(size_t idx) { return m_players[idx]; }
     bool pool_iterator_test(size_t idx)
     {
-        return (*m_players)[idx].get_state() == Player::State::Alive;
+        return m_players[idx].get_state() == Player::State::Alive;
     }
 
 public:
     PlayerPool()
-        : m_players(new std::array<Player, N> { })
+        : m_players(new Player[N])
     {
     }
 
@@ -199,7 +199,7 @@ public:
         if (idx == N)
             return nullptr;
 
-        auto &player = (*m_players)[idx];
+        auto &player = m_players[idx];
         player.spawn(EIDBase + idx, std::move(posrot), std::move(spawn_info));
         m_on_player_spawn.emit({ }, &player);
         return &player;
@@ -216,7 +216,7 @@ public:
                 if (!player || ec)
                     return;
 
-                BasePool<N>::free(player - m_players->data());
+                BasePool<N>::free(player - m_players.get());
                 player->end_death();
             });
 
@@ -237,7 +237,7 @@ public:
     auto living_players()
     {
         PoolTakenSlotsIterator<PlayerPool> begin { *this, 0 }, end { *this, N };
-        if (m_players->front().get_state() != Player::State::Alive)
+        if (m_players[0].get_state() != Player::State::Alive)
             ++begin;
         return std::ranges::subrange(begin, end);
     }
@@ -247,7 +247,8 @@ public:
     constexpr size_t max_players() { return N; }
 
 private:
-    std::unique_ptr<std::array<Player, N>> m_players;
+    // It cannot be std::array because Player's dtor is private
+    std::unique_ptr<Player[]> m_players;
     Signal<void(sys::error_code, Player *)> m_on_player_spawn,
         m_on_player_about_to_die;
 };
