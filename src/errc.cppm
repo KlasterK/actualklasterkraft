@@ -10,7 +10,11 @@ export enum class MCProtocolError {
     UnsufficientPacketData,
     CorrelationIDMismatch,
     BufferTooSmallForPacket,
+};
+
+export enum class MCGameError {
     EntityWasKilled,
+    ServerClosed,
 };
 
 export class MCProtocolErrorCategory : public boost::system::error_category
@@ -19,7 +23,7 @@ private:
     MCProtocolErrorCategory() = default;
 
 public:
-    static MCProtocolErrorCategory &instance()
+    static auto &instance()
     {
         static MCProtocolErrorCategory category;
         return category;
@@ -46,25 +50,57 @@ public:
             return "Correlation ID mismatch";
         case MCProtocolError::BufferTooSmallForPacket:
             return "Buffer is too small for the packet";
-        case MCProtocolError::EntityWasKilled:
-            return "Entity was killed";
         default:
             return std::format("Unknown 0x{:02X}", value);
         }
     }
 };
 
-namespace boost
+export class MCGameErrorCategory : public boost::system::error_category
 {
-    namespace system
+private:
+    MCGameErrorCategory() = default;
+
+public:
+    static auto &instance()
     {
-        template <> struct is_error_code_enum<MCProtocolError> : std::true_type
-        {
-        };
+        static MCGameErrorCategory category;
+        return category;
     }
+
+    const char *name() const noexcept override { return "MCGameErrorCategory"; }
+
+    std::string message(int value) const override
+    {
+        switch (static_cast<MCGameError>(value))
+        {
+        case MCGameError::EntityWasKilled:
+            return "Entity was killed";
+        case MCGameError::ServerClosed:
+            return "Server closed";
+        default:
+            return std::format("Unknown 0x{:02X}", value);
+        }
+    }
+};
+
+namespace boost::system
+{
+    template <> struct is_error_code_enum<MCProtocolError> : std::true_type
+    {
+    };
+
+    template <> struct is_error_code_enum<MCGameError> : std::true_type
+    {
+    };
 }
 
 export boost::system::error_code make_error_code(MCProtocolError err)
 {
     return { static_cast<int>(err), MCProtocolErrorCategory::instance() };
+}
+
+export boost::system::error_code make_error_code(MCGameError err)
+{
+    return { static_cast<int>(err), MCGameErrorCategory::instance() };
 }

@@ -72,7 +72,7 @@ asio::awaitable<void> keepalive_loop(
         co_await send_timer.async_wait(asio::redirect_error(ec));
         if (ec)
             co_return co_await disconnect::play(
-                transport, disconnect::fmt_desync(ec, "Keep Alive timer"));
+                transport, disconnect::fmt_reason(ec, "Keep Alive timer"));
 
         if (timeout_counter++ > 2)
             co_return co_await disconnect::play(
@@ -88,7 +88,7 @@ asio::awaitable<void> keepalive_loop(
             co_return;
         else if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(ec, "Clientbound Keep Alive"));
+                disconnect::fmt_reason(ec, "Clientbound Keep Alive"));
 
         for (uint64_t &active_payload : active_payloads)
         {
@@ -109,16 +109,16 @@ asio::awaitable<void> keepalive_loop(
             co_return;
         else if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(ec, "Serverbound Keep Alive"));
+                disconnect::fmt_reason(ec, "Serverbound Keep Alive"));
 
         auto got_payload = InlineTie(TieReturn, std::ignore, ec)
             = read_number<uint64_t>(ISI(&sb), ISI());
         if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(ec, "Serverbound Keep Alive"));
+                disconnect::fmt_reason(ec, "Serverbound Keep Alive"));
         if (sb.size() > 0)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
+                disconnect::fmt_reason(MCProtocolError::ExcessPacketData,
                     "Serverbound Keep Alive"));
 
         for (auto &active_payload : active_payloads)
@@ -131,7 +131,7 @@ asio::awaitable<void> keepalive_loop(
             }
         }
         co_return co_await disconnect::play(transport,
-            disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
+            disconnect::fmt_reason(MCProtocolError::CorrelationIDMismatch,
                 "Serverbound Keep Alive"));
 
     payload_matched:
@@ -225,11 +225,11 @@ asio::awaitable<void> pull_posrot_loop(
             continue;
         }
         auto [ec, partial_posrot] = std::move(std::get<0>(variant));
-        if (ec == MCProtocolError::EntityWasKilled)
+        if (ec == MCGameError::EntityWasKilled)
             co_return;
         else if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     ec, "while waiting Player.OnPosRotUpdate"));
 
         boost::container::static_vector<uint8_t, 32> vec;
@@ -265,7 +265,7 @@ asio::awaitable<void> pull_posrot_loop(
             co_return;
         else if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     ec, "Update Player Position/Rotation/both"));
 
         if (partial_posrot.is_rotation_present)
@@ -280,7 +280,7 @@ asio::awaitable<void> pull_posrot_loop(
                 co_return;
             else if (ec)
                 co_return co_await disconnect::play(transport,
-                    disconnect::fmt_desync(ec, "Update Head Rotation"));
+                    disconnect::fmt_reason(ec, "Update Head Rotation"));
         }
     }
 }
@@ -312,7 +312,7 @@ asio::awaitable<void> push_posrot_loop(Transport &transport,
             co_return;
         else if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     ec, "Set Player Position/Rotation/both/Movement Flags"));
 
         PosRot result;
@@ -325,7 +325,7 @@ asio::awaitable<void> push_posrot_loop(Transport &transport,
                     = read_number<double>(ISI(&sb), ISI());
                 if (ec)
                     co_return co_await disconnect::play(transport,
-                        disconnect::fmt_desync(ec,
+                        disconnect::fmt_reason(ec,
                             "Set Player Position/Rotation/both/Movement Flags"));
             }
             result.is_position_present = true;
@@ -340,7 +340,7 @@ asio::awaitable<void> push_posrot_loop(Transport &transport,
                         = read_number<float>(ISI(&sb), ISI()));
                 if (ec)
                     co_return co_await disconnect::play(transport,
-                        disconnect::fmt_desync(ec,
+                        disconnect::fmt_reason(ec,
                             "Set Player Position/Rotation/both/Movement Flags"));
             }
             result.head_yaw = result.yaw;
@@ -349,11 +349,11 @@ asio::awaitable<void> push_posrot_loop(Transport &transport,
         int flags = sb.sbumpc();
         if (flags < 0)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(MCProtocolError::UnsufficientPacketData,
+                disconnect::fmt_reason(MCProtocolError::UnsufficientPacketData,
                     "Set Player Position/Rotation/both/Movement Flags"));
         if (sb.sbumpc() >= 0)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
+                disconnect::fmt_reason(MCProtocolError::ExcessPacketData,
                     "Set Player Position/Rotation/both/Movement Flags"));
         result.is_on_ground = flags & 0b01;
         result.is_pushing_against_wall = flags & 0b10;
@@ -389,7 +389,7 @@ asio::awaitable<void> send_spawn_entity_of_player(
         co_return;
     else if (ec)
         co_await disconnect::play(
-            transport, disconnect::fmt_desync(ec, "Spawn Entity"));
+            transport, disconnect::fmt_reason(ec, "Spawn Entity"));
 }
 
 asio::awaitable<void> send_remove_entity_of_player(
@@ -405,7 +405,7 @@ asio::awaitable<void> send_remove_entity_of_player(
         co_return;
     else if (ec)
         co_await disconnect::play(
-            transport, disconnect::fmt_desync(ec, "Remove Entities"));
+            transport, disconnect::fmt_reason(ec, "Remove Entities"));
 }
 
 /******************************************************************************/
@@ -459,7 +459,7 @@ asio::awaitable<void> chat_message_loop(Transport &transport,
             co_return;
         else if (ec)
             co_return co_await disconnect::play(
-                transport, disconnect::fmt_desync(ec, "Chat Message"));
+                transport, disconnect::fmt_reason(ec, "Chat Message"));
 
         auto message_len = InlineTie(TieReturn, std::ignore, std::ignore)
             = read_var<uint32_t>(ISI(&sb), ISI());
@@ -475,7 +475,7 @@ asio::awaitable<void> chat_message_loop(Transport &transport,
 
         if (message_len != sb.sgetn(message.data() + prefix_len, message_len))
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     MCProtocolError::UnsufficientPacketData, "Chat Message"));
 
         // Ignore Mojang crypto shit part of the packet
@@ -496,7 +496,7 @@ asio::awaitable<void> send_system_chat_message(Transport &transport,
         co_return;
     else if (ec)
         co_await disconnect::play(
-            transport, disconnect::fmt_desync(ec, "System Chat Message"));
+            transport, disconnect::fmt_reason(ec, "System Chat Message"));
 }
 
 /******************************************************************************/
@@ -544,7 +544,7 @@ asio::awaitable<void> tab_list_loop(Transport &transport, Player &self)
             co_return;
         else if (ec)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(ec, "Player Info Update/Remove"));
+                disconnect::fmt_reason(ec, "Player Info Update/Remove"));
     }
 };
 
@@ -576,7 +576,7 @@ asio::awaitable<bool> init_tab_list(Transport &transport, Player &self)
     {
         if (!is_normal_shutdown(ec))
             co_await disconnect::play(
-                transport, disconnect::fmt_desync(ec, "Update Player Info"));
+                transport, disconnect::fmt_reason(ec, "Update Player Info"));
         co_return false;
     }
 
@@ -635,7 +635,7 @@ asio::awaitable<void> statecoroutines::play(
         co_return;
     else if (ec)
         co_return co_await disconnect::play(
-            transport, disconnect::fmt_desync(ec, "Login (play)"));
+            transport, disconnect::fmt_reason(ec, "Login (play)"));
 
     // Synchronise Player Position
     uint32_t teleport_id = g_u32_dist(g_rng);
@@ -654,7 +654,7 @@ asio::awaitable<void> statecoroutines::play(
         co_return;
     else if (ec)
         co_return co_await disconnect::play(transport,
-            disconnect::fmt_desync(ec, "Synchronise Player Position"));
+            disconnect::fmt_reason(ec, "Synchronise Player Position"));
 
     // Await for Confirm Teleportation
     {
@@ -667,22 +667,22 @@ asio::awaitable<void> statecoroutines::play(
             co_return;
         else if (ec)
             co_return co_await disconnect::play(
-                transport, disconnect::fmt_desync(ec, "Confirm Teleportation"));
+                transport, disconnect::fmt_reason(ec, "Confirm Teleportation"));
 
         uint32_t got_teleport_id = InlineTie(TieReturn, std::ignore, ec)
             = read_var<uint32_t>(ISI(&streambuf), ISI());
         if (ec)
             co_return co_await disconnect::play(
-                transport, disconnect::fmt_desync(ec, "Confirm Teleportation"));
+                transport, disconnect::fmt_reason(ec, "Confirm Teleportation"));
 
         if (got_teleport_id != teleport_id)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(MCProtocolError::CorrelationIDMismatch,
+                disconnect::fmt_reason(MCProtocolError::CorrelationIDMismatch,
                     "Confirm Teleportation"));
 
         if (streambuf.size() > 0)
             co_return co_await disconnect::play(transport,
-                disconnect::fmt_desync(MCProtocolError::ExcessPacketData,
+                disconnect::fmt_reason(MCProtocolError::ExcessPacketData,
                     "Confirm Teleportation"));
     }
 
@@ -734,7 +734,7 @@ asio::awaitable<void> statecoroutines::play(
         co_return;
     else if (ec)
         co_return co_await disconnect::play(
-            transport, disconnect::fmt_desync(ec, "Game Event"));
+            transport, disconnect::fmt_reason(ec, "Game Event"));
 
     // send Set Centre Chunk
     streambuf.sputc(0x5E); // packet id
@@ -746,7 +746,7 @@ asio::awaitable<void> statecoroutines::play(
         co_return;
     else if (ec)
         co_return co_await disconnect::play(
-            transport, disconnect::fmt_desync(ec, "Set Centre Chunk"));
+            transport, disconnect::fmt_reason(ec, "Set Centre Chunk"));
 
     std::array<Chunk *, 3> z0_chunks;
     z0_chunks[1] = get_global_chunk_pool().get({ 0, 0 });
@@ -784,7 +784,7 @@ asio::awaitable<void> statecoroutines::play(
                 co_return;
             else if (ec)
                 co_return co_await disconnect::play(transport,
-                    disconnect::fmt_desync(ec, "Chunk Data & Update Light"));
+                    disconnect::fmt_reason(ec, "Chunk Data & Update Light"));
         }
     }
 

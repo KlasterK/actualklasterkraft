@@ -1,11 +1,13 @@
 module;
 #include <algorithm>
 #include <array>
+#include <boost/asio.hpp>
 #include <boost/container/flat_map.hpp>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -17,6 +19,7 @@ import actualklasterkraft.protocolprimitives;
 import actualklasterkraft.world.blockstates;
 import actualklasterkraft.world.math;
 
+namespace asio = boost::asio;
 using namespace protocolprimitives;
 
 /******************************************************************************/
@@ -286,12 +289,22 @@ public:
         return &m_sections[(y + 64) / 16];
     }
 
-    Chunk *get_positive_x_neighbor() { return m_positive_x_neighbor; }
-    Chunk *get_negative_x_neighbor() { return m_negative_x_neighbor; }
-    Chunk *get_positive_z_neighbor() { return m_positive_z_neighbor; }
-    Chunk *get_negative_z_neighbor() { return m_negative_z_neighbor; }
-
     [[nodiscard]] const auto &get_xz() { return m_pos; }
+
+#define KK_CHUNK_NEIGHBOR(name_mid)                                            \
+    [[nodiscard]] Chunk *get_##name_mid##_neighbor()                           \
+    {                                                                          \
+        return m_##name_mid##_neighbor;                                        \
+    }                                                                          \
+    [[nodiscard]] const Chunk *get_##name_mid##_neighbor() const               \
+    {                                                                          \
+        return m_##name_mid##_neighbor;                                        \
+    }
+    KK_CHUNK_NEIGHBOR(positive_x)
+    KK_CHUNK_NEIGHBOR(negative_x)
+    KK_CHUNK_NEIGHBOR(positive_z)
+    KK_CHUNK_NEIGHBOR(negative_z)
+#undef KK_CHUNK_NEIGHBOR
 
 private:
     template <size_t N> friend class ChunkPool;
@@ -329,6 +342,15 @@ private:
 
 /******************************************************************************/
 
+// These functions are used by ChunkPool but their definition is placed in
+// separated implementation units.
+namespace chunkimpl
+{
+    void generate(Chunk &);
+    asio::awaitable<bool> load(Chunk &);
+    asio::awaitable<void> store(const Chunk &);
+}
+
 struct XFastZSlowCompare
 {
     [[nodiscard]] bool operator()(
@@ -347,6 +369,12 @@ constexpr auto lower_bound_map_cmp =
 
 export template <size_t N> class ChunkPool : private BasePool<N>
 {
+private:
+    using ValueType = Chunk;
+    friend PoolTakenSlotsIterator<const ChunkPool>;
+    Chunk &pool_iterator_dereference(size_t idx) const { return m_chunks[idx]; }
+    bool pool_iterator_test(size_t) const { return true; }
+
 public:
     ChunkPool()
         : m_chunks(new Chunk[N])
@@ -361,18 +389,18 @@ public:
         return &it->second.get();
     }
 
-    [[nodiscard]] Chunk *acquire(Vec2<int32_t> pos)
+    [[nodiscard]] asio::awaitable<Chunk *> acquire(Vec2<int32_t> pos)
     {
         auto it = m_pos_to_chunk_map.find(pos);
         if (it != m_pos_to_chunk_map.end())
         {
             ++it->second.get().m_refs;
-            return &it->second.get();
+            co_return &it->second.get();
         }
 
         size_t idx = BasePool<N>::allocate();
         if (idx == N)
-            return nullptr;
+            co_return nullptr;
 
         auto &chunk = m_chunks[idx];
         it = m_pos_to_chunk_map.emplace(pos, std::ref(chunk)).first;
@@ -413,7 +441,11 @@ public:
 
         chunk.m_refs = 1;
         chunk.m_pos = pos;
-        return &chunk;
+
+        if (!co_await chunkimpl::load(chunk))
+            chunkimpl::generate(chunk);
+
+        co_return &chunk;
     }
 
     void acquire(Chunk &chunk)
@@ -433,6 +465,16 @@ public:
             BasePool<N>::free(&chunk - m_chunks.get());
             m_pos_to_chunk_map.erase(chunk.m_pos);
             chunk.reset();
+        }
+    }
+
+    asio::awaitable<void> store_all() const
+    {
+        PoolTakenSlotsIterator<const ChunkPool> it { *this, 0 },
+            end { *this, N };
+        for (; it != end; ++it)
+        {
+            co_await chunkimpl::store(*it);
         }
     }
 

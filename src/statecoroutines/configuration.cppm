@@ -33,7 +33,7 @@ export namespace statecoroutines
                 transport, asio::buffer(packet_it, packet_length));
             if (ec)
                 co_return co_await disconnect::configuration(transport,
-                    disconnect::fmt_desync(
+                    disconnect::fmt_reason(
                         ec, "prebuilt Configuration stage packets"));
             packet_it += packet_length;
         }
@@ -44,7 +44,7 @@ export namespace statecoroutines
             = co_await packetops::put(transport, asio::buffer(&packet_id, 1));
         if (ec)
             co_return co_await disconnect::configuration(
-                transport, disconnect::fmt_desync(ec, "Finish Configuration"));
+                transport, disconnect::fmt_reason(ec, "Finish Configuration"));
 
         // Ignore any packets until Acknowledge Finish Configuration
         for (std::array<uint8_t, 65536> buf;;)
@@ -53,11 +53,11 @@ export namespace statecoroutines
                 = co_await packetops::get(transport, asio::buffer(buf));
             if (ec)
                 co_return co_await disconnect::configuration(transport,
-                    disconnect::fmt_desync(
+                    disconnect::fmt_reason(
                         ec, "Acknowledge Finish Configuration"));
             if (packet_size < 0)
                 co_return co_await disconnect::login(transport,
-                    disconnect::fmt_desync(
+                    disconnect::fmt_reason(
                         MCProtocolError::UnsufficientPacketData,
                         "Acknowledge Finish Configuration"));
 
@@ -66,7 +66,7 @@ export namespace statecoroutines
             {
                 if (packet_size > 1) // No fields
                     co_return co_await disconnect::login(transport,
-                        disconnect::fmt_desync(
+                        disconnect::fmt_reason(
                             MCProtocolError::ExcessPacketData,
                             "Acknowledge Finish Configuration"));
                 break;

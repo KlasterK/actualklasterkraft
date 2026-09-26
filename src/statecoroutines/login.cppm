@@ -87,19 +87,19 @@ export namespace statecoroutines
             = co_await packetops::get(transport, asio::buffer(buf));
         if (ec)
             co_return co_await disconnect::login(
-                transport, disconnect::fmt_desync(ec, "Login Start"));
+                transport, disconnect::fmt_reason(ec, "Login Start"));
         auto end = it + packet_size;
 
         if (*it++ != 0x00) // Login Start
             co_return co_await disconnect::login(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     MCProtocolError::UnexpectedPacketID, "Login Start"));
 
         auto name_len = InlineTie(TieReturn, it, ec)
             = read_var<uint32_t>(it, end);
         if (ec)
             co_return co_await disconnect::login(
-                transport, disconnect::fmt_desync(ec, "Login Start"));
+                transport, disconnect::fmt_reason(ec, "Login Start"));
         if (name_len < 1)
             co_return co_await disconnect::login(
                 transport, "Your name can't be empty");
@@ -114,11 +114,11 @@ export namespace statecoroutines
         it += name_len + 16;
         if (end < it)
             co_return co_await disconnect::login(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     MCProtocolError::UnsufficientPacketData, "Login Start"));
         if (end > it)
             co_return co_await disconnect::login(transport,
-                disconnect::fmt_desync(
+                disconnect::fmt_reason(
                     MCProtocolError::ExcessPacketData, "Login Start"));
 
         // Login Success
@@ -135,7 +135,7 @@ export namespace statecoroutines
             transport, asio::buffer(buf.data(), it - buf.begin()));
         if (ec)
             co_return co_await disconnect::login(
-                transport, disconnect::fmt_desync(ec, "Login Success"));
+                transport, disconnect::fmt_reason(ec, "Login Success"));
 
         // Ignore any packets until Login Acknowledged
         for (;;)
@@ -144,10 +144,10 @@ export namespace statecoroutines
                 = co_await packetops::get(transport, asio::buffer(buf));
             if (ec)
                 co_return co_await disconnect::login(transport,
-                    disconnect::fmt_desync(ec, "Login Acknowledged"));
+                    disconnect::fmt_reason(ec, "Login Acknowledged"));
             if (packet_size < 0)
                 co_return co_await disconnect::login(transport,
-                    disconnect::fmt_desync(
+                    disconnect::fmt_reason(
                         MCProtocolError::UnsufficientPacketData,
                         "Login Acknowledged"));
 
@@ -155,7 +155,7 @@ export namespace statecoroutines
             {
                 if (packet_size > 1) // No fields
                     co_return co_await disconnect::login(transport,
-                        disconnect::fmt_desync(
+                        disconnect::fmt_reason(
                             MCProtocolError::ExcessPacketData,
                             "Login Acknowledged"));
                 break;

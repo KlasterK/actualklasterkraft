@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <bit>
 #include <boost/asio.hpp>
 #include <boost/container/small_vector.hpp>
@@ -8,7 +9,6 @@ module;
 #include <optional>
 #include <ranges>
 #include <utility>
-#include <algorithm>
 export module actualklasterkraft.world.player;
 
 import actualklasterkraft.basepool;
@@ -148,15 +148,14 @@ private:
         m_posrot = { };
         m_spawn_info = { };
 
-        m_on_posrot_update.emit(MCProtocolError::EntityWasKilled, { });
+        m_on_posrot_update.emit(MCGameError::EntityWasKilled, { });
         // In case somebody started waiting OnAboutToDie in an OnAboutToDie handler
-        m_on_about_to_die.emit(MCProtocolError::EntityWasKilled);
+        m_on_about_to_die.emit(MCGameError::EntityWasKilled);
         m_on_player_enter_simulation_distance.emit(
-            MCProtocolError::EntityWasKilled, nullptr);
+            MCGameError::EntityWasKilled, nullptr);
         m_on_player_exit_simulation_distance.emit(
-            MCProtocolError::EntityWasKilled, nullptr);
-        m_on_chat_message.emit(
-            MCProtocolError::EntityWasKilled, nullptr, false);
+            MCGameError::EntityWasKilled, nullptr);
+        m_on_chat_message.emit(MCGameError::EntityWasKilled, nullptr, false);
     }
 
 private:

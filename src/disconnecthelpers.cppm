@@ -76,10 +76,18 @@ export namespace disconnect
         return epilog(transport, std::move(vec), std::move(reason));
     }
 
-    std::string fmt_desync(sys::error_code ec, std::string_view opt_ctx)
+    std::string fmt_reason(sys::error_code ec, std::string_view opt_ctx)
     {
-        return opt_ctx.empty()
-            ? std::format("Protocol Desync : {}", ec)
-            : std::format("Protocol Desync ({}) : {}", opt_ctx, ec);
+        if (ec == MCGameError::ServerClosed)
+            return "Server closed";
+        if (ec.category() == MCGameErrorCategory::instance())
+            return "";
+        if (ec.category() == MCProtocolErrorCategory::instance()
+            || ec.category() == asio::error::system_category
+            || ec.category() == asio::error::misc_category)
+            return opt_ctx.empty()
+                ? std::format("Protocol Desync : {}", ec)
+                : std::format("Protocol Desync ({}) : {}", opt_ctx, ec);
+        return "wtf";
     }
 }
