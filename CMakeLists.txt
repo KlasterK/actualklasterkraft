@@ -12,7 +12,7 @@ option(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
 option(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES
     "Enable fixes for building with Microsoft Visual C++ toolchain
         (cl.exe is not supported but Clang is supported)"
-    ON
+    OFF
 )
 
 option(ACTUALKLASTERKRAFT_ENABLE_PCH
