@@ -12,7 +12,7 @@ option(ACTUALKLASTERKRAFT_IMPLEMENT_STD_PRINT_TERMINAL_FUNCTIONS_WIN32
 option(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES
     "Enable fixes for building with Microsoft Visual C++ toolchain
         (cl.exe is not supported but Clang is supported)"
-    OFF
+    ON
 )
 
 option(ACTUALKLASTERKRAFT_ENABLE_PCH
@@ -76,8 +76,11 @@ target_sources(actualklasterkraft
         src/pubsub.cppm
         src/templates.cppm
         src/transport.cppm
+        src/world/chunkimpl/generation.cppm
+        src/world/chunkimpl/storage.cppm
     PRIVATE
         src/main.cpp
+        
 )
 
 target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL::Crypto)
@@ -101,7 +104,7 @@ if(ACTUALKLASTERKRAFT_ENABLE_VISUAL_CXX_FIXES)
     target_compile_options(actualklasterkraft PRIVATE -target ${WIN32_CLANG_TARGET})
     target_link_options(actualklasterkraft PRIVATE -target ${WIN32_CLANG_TARGET})
     target_link_options(actualklasterkraft PRIVATE "-Xlinker" "/nodefaultlib:libcmt")
-    target_compile_options(actualklasterkraft PRIVATE "-include" "src/visualcxxboostfix.hpp")
+    target_compile_options(actualklasterkraft PRIVATE "-include" "${CMAKE_CURRENT_SOURCE_DIR}/src/visualcxxboostfix.hpp")
 endif()
 
 if(ACTUALKLASTERKRAFT_ENABLE_PCH)

@@ -23,8 +23,8 @@ export namespace statecoroutines
         // For Configuration, we should synchronise our game data with client's game data.
         // We'll ignore serverbound packets for simplicity.
 
-        auto packet_it = PrebuiltConfigurationStagePackets.data.data();
-        for (size_t packet_length : PrebuiltConfigurationStagePackets.lengths)
+        auto packet_it = PrebuiltConfigurationStagePackets_26_1.data.data();
+        for (size_t packet_length : PrebuiltConfigurationStagePackets_26_1.lengths)
         {
             if (packet_length == 0)
                 break;

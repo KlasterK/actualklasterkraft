@@ -15,19 +15,19 @@ import actualklasterkraft.world.chunk;
 import actualklasterkraft.world.math;
 import actualklasterkraft.world.player;
 
-void prepare_world()
+boost::asio::awaitable<void> prepare_world()
 {
-    Chunk *central_chunk = get_global_chunk_pool().acquire({ 0, 0 });
+    Chunk *central_chunk = co_await get_global_chunk_pool().acquire({ 0, 0 });
     for (int32_t x = -1; x <= 1; ++x)
     {
         for (int32_t z = -1; z <= 1; ++z)
         {
             if (x == 0 && z == 0)
                 continue;
-            (void)get_global_chunk_pool().acquire({ x, z });
+            (void)co_await get_global_chunk_pool().acquire({ x, z });
         }
     }
-
+    
     auto &section = central_chunk->get_section_by_index(9);
     section.reset_with_palette(blockstates::superflat::Palette);
     for (int32_t x { }; x < 16; ++x)
@@ -62,8 +62,9 @@ int main()
 {
     std::println("Hello World!");
 
-    prepare_world();
     boost::asio::io_context io;
+
+    boost::asio::co_spawn(io, prepare_world(), boost::asio::detached);
 
     Acceptor acceptor(io.get_executor(), 25565);
     acceptor.start();
