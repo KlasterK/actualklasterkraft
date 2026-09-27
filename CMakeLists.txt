@@ -52,35 +52,39 @@ endif()
 add_executable(actualklasterkraft)
 
 target_sources(actualklasterkraft
+    PRIVATE
+        src/main.cpp
+
     PUBLIC FILE_SET CXX_MODULES FILES
-        src/statecoroutines/configuration.cppm
-        src/statecoroutines/handshake.cppm
-        src/statecoroutines/login.cppm
-        src/statecoroutines/play.cppm
-        src/statecoroutines/status.cppm
+        src/core/basepool.cppm
+        src/core/errc.cppm
+        src/core/formatters.cppm
+        src/core/pubsub.cppm
+        src/core/templates.cppm
+        
+        src/net/acceptor.cppm
+        src/net/packetops.cppm
+        src/net/packetrouter.cppm
+        src/net/protocolprimitives.cppm
+        src/net/transport.cppm
+        
+        src/protocol/configuration.cppm
+        src/protocol/handshake.cppm
+        src/protocol/login.cppm
+        src/protocol/play.cppm
+        src/protocol/status.cppm
+        
+        src/utils/bitfields.cppm
+        src/utils/disconnecthelpers.cppm
+        src/utils/nbtbuilder.cppm
+        src/utils/prebuiltconfiguration.cppm
+        
+        src/world/chunkimpl/generation.cppm
+        src/world/chunkimpl/storage.cppm
         src/world/blockstates.cppm
         src/world/chunk.cppm
         src/world/math.cppm
-        src/world/player.cppm
-        src/acceptor.cppm
-        src/basepool.cppm
-        src/bitfields.cppm
-        src/disconnecthelpers.cppm
-        src/errc.cppm
-        src/formatters.cppm
-        src/nbtbuilder.cppm
-        src/packetops.cppm
-        src/packetrouter.cppm
-        src/prebuiltconfiguration.cppm
-        src/protocolprimitives.cppm
-        src/pubsub.cppm
-        src/templates.cppm
-        src/transport.cppm
-        src/world/chunkimpl/generation.cppm
-        src/world/chunkimpl/storage.cppm
-    PRIVATE
-        src/main.cpp
-        
+        src/world/player.cppm        
 )
 
 target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL::Crypto)

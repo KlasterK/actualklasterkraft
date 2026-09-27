@@ -4,8 +4,8 @@ module;
 export module actualklasterkraft.errc;
 
 export enum class MCProtocolError {
-    VarIntTooBig,
-    UnexpectedPacketID,
+    VarIntTooBig = 1,
+    UnexpectedPacketID = 2,
     ExcessPacketData,
     UnsufficientPacketData,
     CorrelationIDMismatch,
@@ -13,8 +13,8 @@ export enum class MCProtocolError {
 };
 
 export enum class MCGameError {
-    EntityWasKilled,
-    ServerClosed,
+    EntityWasKilled = 1,
+    ServerClosed = 2,
 };
 
 export class MCProtocolErrorCategory : public boost::system::error_category
