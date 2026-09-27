@@ -145,6 +145,7 @@ export constexpr ConfigurationPackets PrebuiltConfigurationStagePackets
 
     fwd(KnownPacks { std::to_array<KnownPack>({
                          { "minecraft", "core", "26.1.2" },
+                         { "minecraft", "core", "26.1" },
                      }) }
             .put(data_output_it));
 
