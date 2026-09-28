@@ -6,7 +6,7 @@ module;
 #include <cstdint>
 #include <numeric>
 #include <type_traits>
-export module actualklasterkraft.basepool;
+export module actualklasterkraft.generic.basepool;
 
 export template <size_t N> class BasePool
 {

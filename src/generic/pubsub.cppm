@@ -2,8 +2,9 @@ module;
 #include <boost/asio.hpp>
 #include <boost/container/small_vector.hpp>
 #include <concepts>
+#include <new>
 #include <tuple>
-export module actualklasterkraft.pubsub;
+export module actualklasterkraft.generic.pubsub;
 
 namespace asio = boost::asio;
 
@@ -72,3 +73,6 @@ private:
         1>
         m_awaiters;
 };
+
+// https://www.mail-archive.com/llvm-bugs%40lists.llvm.org/msg102289.html
+template class Signal<void()>;

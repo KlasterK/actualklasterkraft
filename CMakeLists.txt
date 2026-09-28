@@ -52,39 +52,44 @@ endif()
 add_executable(actualklasterkraft)
 
 target_sources(actualklasterkraft
+    PUBLIC FILE_SET CXX_MODULES FILES
+        src/generic/basepool.cppm
+        src/generic/completiontokens.cppm
+        src/generic/errc.cppm
+        src/generic/formatters.cppm
+        src/generic/math.cppm
+        src/generic/pubsub.cppm
+        src/generic/templates.cppm
+        src/data/bitfields.cppm
+        src/data/blockstates.cppm
+        src/data/nbtbuilder.cppm
+        src/data/prebuiltconfiguration.cppm
+        src/data/protocolprimitives.cppm
+        src/world/chunk.cppm
+        src/world/player.cppm
+        src/world/posrot.cppm
+        src/net/base/acceptor.cppm
+        src/net/base/disconnecthelpers.cppm
+        src/net/base/packetops.cppm
+        src/net/base/statecoroutines.cppm
+        src/net/base/transport.cppm
+        src/net/play/chat.cppm
+        src/net/play/chunkserialization.cppm
+        src/net/play/entityplacement.cppm
+        src/net/play/initiation.cppm
+        src/net/play/keepalive.cppm
+        src/net/play/motion.cppm
+        src/net/play/packetrouter.cppm
+        src/net/play/playerlist.cppm
     PRIVATE
         src/main.cpp
-
-    PUBLIC FILE_SET CXX_MODULES FILES
-        src/core/basepool.cppm
-        src/core/errc.cppm
-        src/core/formatters.cppm
-        src/core/pubsub.cppm
-        src/core/templates.cppm
-        
-        src/net/acceptor.cppm
-        src/net/packetops.cppm
-        src/net/packetrouter.cppm
-        src/net/protocolprimitives.cppm
-        src/net/transport.cppm
-        
-        src/protocol/configuration.cppm
-        src/protocol/handshake.cppm
-        src/protocol/login.cppm
-        src/protocol/play.cppm
-        src/protocol/status.cppm
-        
-        src/utils/bitfields.cppm
-        src/utils/disconnecthelpers.cppm
-        src/utils/nbtbuilder.cppm
-        src/utils/prebuiltconfiguration.cppm
-        
-        src/world/chunkimpl/generation.cppm
-        src/world/chunkimpl/storage.cppm
-        src/world/blockstates.cppm
-        src/world/chunk.cppm
-        src/world/math.cppm
-        src/world/player.cppm        
+        src/world/chunkimpl/generation.cpp
+        src/world/chunkimpl/storage.cpp
+        src/net/statecoroutinesimpl/configuration.cpp
+        src/net/statecoroutinesimpl/handshake.cpp
+        src/net/statecoroutinesimpl/login.cpp
+        src/net/statecoroutinesimpl/play.cpp
+        src/net/statecoroutinesimpl/status.cpp
 )
 
 target_link_libraries(actualklasterkraft PUBLIC Boost::boost Boost::json OpenSSL::Crypto)
@@ -116,6 +121,7 @@ if(ACTUALKLASTERKRAFT_ENABLE_PCH)
         <boost/asio.hpp>
         <boost/asio/experimental/awaitable_operators.hpp>
         <boost/asio/experimental/channel.hpp>
+        <boost/container/flat_map.hpp>
         <boost/container/small_vector.hpp>
         <boost/container/static_vector.hpp>
         <boost/endian.hpp>
@@ -124,6 +130,8 @@ if(ACTUALKLASTERKRAFT_ENABLE_PCH)
         <boost/intrusive/options.hpp>
         <boost/intrusive/slist.hpp>
         <boost/json.hpp>
+        <boost/smart_ptr/local_shared_ptr.hpp>
+        <boost/smart_ptr/make_local_shared.hpp>
         <boost/system.hpp>
 
         <openssl/err.h>
@@ -147,7 +155,6 @@ if(ACTUALKLASTERKRAFT_ENABLE_PCH)
         <memory>
         <numbers>
         <numeric>
-        <optional>
         <print>
         <random>
         <ranges>
@@ -155,9 +162,11 @@ if(ACTUALKLASTERKRAFT_ENABLE_PCH)
         <stdexcept>
         <string>
         <string_view>
+        <system_error>
         <tuple>
         <type_traits>
         <utility>
+        <variant>
         <vector>
     )
 endif()

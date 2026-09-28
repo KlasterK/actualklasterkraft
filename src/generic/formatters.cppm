@@ -4,7 +4,7 @@ module;
 #include <boost/system.hpp>
 #include <format>
 #include <span>
-export module actualklasterkraft.formatters;
+export module actualklasterkraft.generic.formatters;
 
 template <> struct std::formatter<boost::system::error_code, char>
 {

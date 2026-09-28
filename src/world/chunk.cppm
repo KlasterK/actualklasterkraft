@@ -9,15 +9,16 @@ module;
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <new>
 #include <ranges>
 #include <span>
 #include <variant>
 export module actualklasterkraft.world.chunk;
 
-import actualklasterkraft.basepool;
-import actualklasterkraft.protocolprimitives;
-import actualklasterkraft.world.blockstates;
-import actualklasterkraft.world.math;
+import actualklasterkraft.generic.basepool;
+import actualklasterkraft.generic.math;
+import actualklasterkraft.data.blockstates;
+import actualklasterkraft.data.protocolprimitives;
 
 namespace asio = boost::asio;
 using namespace protocolprimitives;
@@ -55,7 +56,7 @@ struct DirectPC
 
     uint32_t get(size_t idx) const { return (*data)[idx]; }
 
-    auto serialize(auto it) const
+    auto net_serialize(auto it) const
     {
         it = write_number(it, uint8_t(15));
         it = encode_bit_entries(
@@ -70,7 +71,7 @@ struct SingleValuedPC
 
     uint32_t get(size_t) const { return value; }
 
-    auto serialize(auto it) const
+    auto net_serialize(auto it) const
     {
         it = write_number(it, uint8_t(0));
         it = write_var<uint32_t>(it, value);
@@ -100,7 +101,7 @@ struct IndirectPC
         return palette[data[idx / 2] >> 4];
     }
 
-    auto serialize(auto it) const
+    auto net_serialize(auto it) const
     {
         uint8_t bpe = std::max(4, std::bit_width(palette.size() - 1));
 
@@ -201,12 +202,12 @@ public:
             + pos16.y * BlockExtentSq] = value;
     }
 
-    auto serialize(auto it)
+    auto net_serialize(auto it)
     {
         it = write_number(it, m_block_count);
         it = write_number(it, m_fluid_count);
         std::visit(
-            [&](const auto &pc) { it = pc.serialize(it); }, m_block_states);
+            [&](const auto &pc) { it = pc.net_serialize(it); }, m_block_states);
         // TODO: implement biomes changing
         it = write_number<uint8_t>(it, 0x00); // Single Valued
         it = write_var<uint32_t>(it, 40); // hardcoded plains
@@ -491,42 +492,4 @@ export [[nodiscard]] auto &get_global_chunk_pool()
 {
     static ChunkPool<16384> pool;
     return pool;
-}
-
-/******************************************************************************/
-
-export namespace chunkserialization
-{
-    auto heightmaps(auto it, Chunk &)
-    {
-        // TODO: implement proper heightmaps serialisation
-        return write_var<uint32_t>(it, 0);
-    }
-
-    auto data(auto it, Chunk &chunk)
-    {
-        for (size_t i { }; i < Chunk::SectionCount; ++i)
-        {
-            it = chunk.get_section_by_index(i).serialize(it);
-        }
-        return it;
-    }
-
-    auto block_entities(auto it, Chunk &)
-    {
-        // TODO: when block entities will be added, add their serialisation
-        return write_var<uint32_t>(it, 0);
-    }
-
-    auto light(auto it, Chunk &)
-    {
-        // TODO: when light will be added, add its serialisation
-        *it++ = 0; // Sky Light Mask
-        *it++ = 0; // Block Light Mask
-        *it++ = 0; // Empty Sky Light Mask
-        *it++ = 0; // Empty Block Light Mask
-        *it++ = 0; // Sky Lights Arrays
-        *it++ = 0; // Block Lights Arrays
-        return it;
-    }
 }

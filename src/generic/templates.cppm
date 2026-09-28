@@ -4,7 +4,7 @@ module;
 #include <tuple>
 #include <type_traits>
 #include <utility>
-export module actualklasterkraft.templates;
+export module actualklasterkraft.generic.templates;
 
 export struct TieReturnT
 {

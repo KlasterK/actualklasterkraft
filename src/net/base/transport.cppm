@@ -1,10 +1,10 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/system.hpp>
-#include <print>
 #include <utility>
-export module actualklasterkraft.transport;
+export module actualklasterkraft.net.base.transport;
 
+namespace asio = boost::asio;
 namespace sys = boost::system;
 using boost::asio::ip::tcp;
 
@@ -22,19 +22,9 @@ export struct Transport
     }
 };
 
-export const auto detached_rethrow_token = [](std::exception_ptr exc_ptr)
+export bool is_normal_shutdown(sys::error_code non_empty_ec)
 {
-    if (!exc_ptr)
-        return;
-
-    try
-    {
-        std::rethrow_exception(exc_ptr);
-    }
-    catch (const std::exception &exc)
-    {
-        std::println(
-            "Unhandled exception in a detached async operation!\nWhat: {}",
-            exc.what());
-    }
-};
+    return non_empty_ec == asio::error::eof
+        || non_empty_ec == asio::error::operation_aborted
+        || non_empty_ec == asio::error::bad_descriptor;
+}

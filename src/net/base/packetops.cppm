@@ -5,15 +5,15 @@ module;
 #include <boost/system.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <tuple>
 #include <utility>
-#include <span>
-export module actualklasterkraft.packetops;
+export module actualklasterkraft.net.base.packetops;
 
-import actualklasterkraft.errc;
-import actualklasterkraft.protocolprimitives;
-import actualklasterkraft.templates;
-import actualklasterkraft.transport;
+import actualklasterkraft.generic.errc;
+import actualklasterkraft.generic.templates;
+import actualklasterkraft.data.protocolprimitives;
+import actualklasterkraft.net.base.transport;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;

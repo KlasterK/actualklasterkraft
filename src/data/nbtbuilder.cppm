@@ -1,12 +1,12 @@
 module;
+#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <cstdint>
 #include <string_view>
-#include <algorithm>
-export module actualklasterkraft.nbtbuilder;
+export module actualklasterkraft.data.nbtbuilder;
 
-import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.data.protocolprimitives;
 
 export namespace nbttags
 {

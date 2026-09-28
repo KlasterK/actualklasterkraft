@@ -3,11 +3,12 @@ module;
 #include <boost/system.hpp>
 #include <exception>
 #include <print>
-export module actualklasterkraft.acceptor;
+export module actualklasterkraft.net.base.acceptor;
 
-import actualklasterkraft.formatters;
-import actualklasterkraft.transport;
-import actualklasterkraft.statecoroutines.handshake;
+import actualklasterkraft.generic.completiontokens;
+import actualklasterkraft.generic.formatters;
+import actualklasterkraft.net.base.transport;
+import actualklasterkraft.net.base.statecoroutines;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -45,7 +46,7 @@ public:
 
                 asio::co_spawn(m_acceptor.get_executor(),
                     statecoroutines::handshake(std::move(transport)),
-                    detached_rethrow_token);
+                    detached_log_exceptions_token);
 
                 start();
             });

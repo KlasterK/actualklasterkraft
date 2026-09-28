@@ -3,9 +3,9 @@ module;
 #include <cstdint>
 #include <string_view>
 #include <tuple>
-export module actualklasterkraft.prebuiltconfiguration;
+export module actualklasterkraft.data.prebuiltconfiguration;
 
-import actualklasterkraft.protocolprimitives;
+import actualklasterkraft.data.protocolprimitives;
 
 using namespace protocolprimitives;
 

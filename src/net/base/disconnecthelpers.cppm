@@ -4,15 +4,15 @@ module;
 #include <boost/system.hpp>
 #include <print>
 #include <string_view>
-export module actualklasterkraft.disconnecthelpers;
+export module actualklasterkraft.net.base.disconnecthelpers;
 
-import actualklasterkraft.errc;
-import actualklasterkraft.formatters;
-import actualklasterkraft.nbtbuilder;
-import actualklasterkraft.packetops;
-import actualklasterkraft.protocolprimitives;
-import actualklasterkraft.templates;
-import actualklasterkraft.transport;
+import actualklasterkraft.generic.errc;
+import actualklasterkraft.generic.formatters;
+import actualklasterkraft.generic.templates;
+import actualklasterkraft.data.nbtbuilder;
+import actualklasterkraft.data.protocolprimitives;
+import actualklasterkraft.net.base.packetops;
+import actualklasterkraft.net.base.transport;
 
 using namespace protocolprimitives;
 using namespace std::literals;

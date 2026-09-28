@@ -9,13 +9,13 @@ module;
 #include <functional>
 #include <print>
 #include <stdexcept>
-export module actualklasterkraft.packetrouter;
+export module actualklasterkraft.net.play.packetrouter;
 
-import actualklasterkraft.errc;
-import actualklasterkraft.packetops;
-import actualklasterkraft.protocolprimitives;
-import actualklasterkraft.templates;
-import actualklasterkraft.transport;
+import actualklasterkraft.generic.errc;
+import actualklasterkraft.generic.templates;
+import actualklasterkraft.data.protocolprimitives;
+import actualklasterkraft.net.base.packetops;
+import actualklasterkraft.net.base.transport;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -30,8 +30,6 @@ using MoveOnlyOrOldFunction =
 #else
     std::function<Ts...>;
 #endif
-
-/******************************************************************************/
 
 export class PacketSubscription
 {
@@ -82,8 +80,6 @@ private:
     std::reference_wrapper<MOF> m_table_entry;
     bi::list_member_hook<bi::link_mode<bi::auto_unlink>> m_hook;
 };
-
-/******************************************************************************/
 
 export class PacketRouter
 {

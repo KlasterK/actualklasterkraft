@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <bit>
 #include <boost/endian.hpp>
 #include <boost/system.hpp>
@@ -6,14 +7,13 @@ module;
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <numbers>
 #include <string_view>
 #include <tuple>
-#include <numbers>
-#include <algorithm>
-export module actualklasterkraft.protocolprimitives;
+export module actualklasterkraft.data.protocolprimitives;
 
-import actualklasterkraft.errc;
-import actualklasterkraft.world.math;
+import actualklasterkraft.generic.errc;
+import actualklasterkraft.generic.math;
 
 namespace sys = boost::system;
 namespace en = boost::endian;

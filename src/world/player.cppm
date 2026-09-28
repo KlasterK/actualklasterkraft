@@ -1,66 +1,30 @@
 module;
 #include <algorithm>
-#include <bit>
 #include <boost/asio.hpp>
-#include <boost/container/small_vector.hpp>
+#include <boost/container/static_vector.hpp>
+#include <boost/smart_ptr/local_shared_ptr.hpp>
 #include <cstddef>
 #include <iterator>
-#include <numeric>
-#include <optional>
+#include <new>
 #include <ranges>
 #include <utility>
 export module actualklasterkraft.world.player;
 
-import actualklasterkraft.basepool;
-import actualklasterkraft.bitfields;
-import actualklasterkraft.errc;
-import actualklasterkraft.pubsub;
-import actualklasterkraft.world.math;
+import actualklasterkraft.generic.basepool;
+import actualklasterkraft.generic.errc;
+import actualklasterkraft.generic.pubsub;
+import actualklasterkraft.world.posrot;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
 
 /******************************************************************************/
 
-export struct PosRot
-{
-    Vec3<double> position;
-    Angle pitch;
-    Angle yaw;
-    Angle head_yaw;
-    bool is_on_ground : 1 = false;
-    bool is_pushing_against_wall : 1 = false;
-    bool is_position_present : 1 = false;
-    bool is_rotation_present : 1 = false;
-
-    void partial_update(const PosRot &other)
-    {
-        if (other.is_position_present)
-        {
-            position = other.position;
-            is_position_present = 1;
-        }
-
-        if (other.is_rotation_present)
-        {
-            pitch = other.pitch;
-            yaw = other.yaw;
-            head_yaw = other.head_yaw;
-            is_rotation_present = 1;
-        }
-
-        is_on_ground = other.is_on_ground;
-        is_pushing_against_wall = other.is_pushing_against_wall;
-    }
-};
-
-/******************************************************************************/
-
 export class Player
 {
 public:
-    using TextComponentStorage = boost::container::small_vector<uint8_t, 64>;
-    using SharedTextComponent = std::shared_ptr<TextComponentStorage>;
+    using TextComponentStorage = boost::container::static_vector<uint8_t, 512>;
+    using SharedTextComponent = boost::local_shared_ptr<TextComponentStorage>;
 
     enum class State
     {
@@ -73,6 +37,7 @@ public:
     {
         std::string name;
         std::array<uint8_t, 16> uuid;
+        uint8_t view_distance { };
     };
 
 public:
@@ -86,6 +51,7 @@ public:
     const PosRot &get_posrot() const { return m_posrot; }
     std::string_view get_name() const { return m_spawn_info.name; }
     std::span<const uint8_t, 16> get_uuid() const { return m_spawn_info.uuid; }
+    uint8_t get_view_distance() const { return m_spawn_info.view_distance; }
 
     void update_posrot(PosRot posrot)
     {

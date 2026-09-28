@@ -1,6 +1,6 @@
 module;
 #include <cstdint>
-export module actualklasterkraft.bitfields;
+export module actualklasterkraft.data.bitfields;
 
 export namespace TeleportFlags
 {

@@ -5,7 +5,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <ranges>
-export module actualklasterkraft.world.blockstates;
+export module actualklasterkraft.data.blockstates;
 
 template <typename T, typename... Args>
 consteval auto guarantee_sorted_array(Args... args)

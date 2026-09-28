@@ -1,11 +1,11 @@
 module;
 #include <boost/system.hpp>
 #include <string>
-export module actualklasterkraft.errc;
+export module actualklasterkraft.generic.errc;
 
 export enum class MCProtocolError {
     VarIntTooBig = 1,
-    UnexpectedPacketID = 2,
+    UnexpectedPacketID,
     ExcessPacketData,
     UnsufficientPacketData,
     CorrelationIDMismatch,
@@ -14,7 +14,7 @@ export enum class MCProtocolError {
 
 export enum class MCGameError {
     EntityWasKilled = 1,
-    ServerClosed = 2,
+    ServerClosed,
 };
 
 export class MCProtocolErrorCategory : public boost::system::error_category

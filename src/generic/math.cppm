@@ -30,7 +30,7 @@ module;
 #include <cmath>
 #include <numbers>
 #include <type_traits>
-export module actualklasterkraft.world.math;
+export module actualklasterkraft.generic.math;
 
 namespace priv
 {
