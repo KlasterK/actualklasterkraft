@@ -1,9 +1,11 @@
 module;
 #include <boost/asio.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/experimental/channel.hpp>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <random>
 export module actualklasterkraft.net.play.keepalive;
 
@@ -17,11 +19,14 @@ import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
 import actualklasterkraft.net.play.packetrouter;
+import actualklasterkraft.net.play.session;
+
+using namespace std::literals;
+using namespace protocolprimitives;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
-using namespace std::literals;
-using namespace protocolprimitives;
+using namespace asio::experimental::awaitable_operators;
 using ISI = std::istreambuf_iterator<char>;
 
 static std::minstd_rand g_rng { std::random_device { }() };
@@ -29,15 +34,24 @@ static std::minstd_rand g_rng { std::random_device { }() };
 constexpr int32_t ServerboundKeepAlivePacketID = 0x1C;
 constexpr int32_t ClientboundKeepAlivePacketID = 0x2C;
 
-export asio::awaitable<void> keepalive_loop(
-    Transport &transport, asio::streambuf &sb, PacketRouter &packet_router)
+export asio::awaitable<void> keepalive_loop(std::shared_ptr<PlaySession> session)
 {
+    SessionTaskGuard guard { session };
+    Transport &transport = session->transport;
+    asio::streambuf &sb = session->streambuf;
+    PacketRouter &packet_router = session->router;
+
     asio::steady_timer send_timer(transport.socket.get_executor());
     asio::experimental::channel<PacketRouter::OnPacketSignature>
         serverbound_keepalive_channel(transport.socket.get_executor());
     auto sub = packet_router.subscribe(ServerboundKeepAlivePacketID,
         [&](sys::error_code ec, uint32_t id)
         { serverbound_keepalive_channel.async_send(ec, id, asio::detached); });
+
+    // The receive loop may already be dead (client disconnected during
+    // init): without this check we'd wait on done/channel forever.
+    if (packet_router.dead())
+        co_return;
 
     // If a payload is 0, the payload doesn't exist
     std::array<uint64_t, 10> active_payloads { };
@@ -47,10 +61,24 @@ export asio::awaitable<void> keepalive_loop(
     for (;;)
     {
         send_timer.expires_after(1s);
-        co_await send_timer.async_wait(asio::redirect_error(ec));
-        if (ec)
+
+        if (session->dead)
+            co_return;
+
+        // Wait for timer OR session teardown (replaces the old
+        // transport.done_signal wait, which referenced a possibly
+        // destroyed Transport).
+        auto variant = co_await (
+            send_timer.async_wait(asio::as_tuple(asio::use_awaitable))
+            || session->done.wait(asio::as_tuple(asio::use_awaitable)));
+
+        if (std::get_if<1>(&variant)) // teardown requested
+            co_return;
+
+        auto [timer_ec] = std::get<0>(variant);
+        if (timer_ec)
             co_return co_await disconnect::play(
-                transport, disconnect::fmt_reason(ec, "Keep Alive timer"));
+                transport, disconnect::fmt_reason(timer_ec, "Keep Alive timer"));
 
         if (timeout_counter++ > 2)
             co_return co_await disconnect::play(
@@ -81,8 +109,18 @@ export asio::awaitable<void> keepalive_loop(
         active_payloads[0] = payload;
 
     payload_placed:
-        co_await serverbound_keepalive_channel.async_receive(
-            asio::redirect_error(ec));
+        if (session->dead)
+            co_return;
+
+        // Also abort the wait when the session is tearing down,
+        // otherwise we'd hang here forever after play() closes the socket.
+        auto recv_variant = co_await (
+            serverbound_keepalive_channel.async_receive(
+                asio::as_tuple(asio::use_awaitable))
+            || session->done.wait(asio::as_tuple(asio::use_awaitable)));
+        if (std::get_if<1>(&recv_variant))
+            co_return;
+        ec = std::get<0>(std::get<0>(recv_variant));
         if (is_normal_shutdown(ec))
             co_return;
         else if (ec)

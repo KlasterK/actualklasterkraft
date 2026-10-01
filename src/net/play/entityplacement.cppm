@@ -3,6 +3,7 @@ module;
 #include <boost/asio.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <ranges>
 export module actualklasterkraft.net.play.entityplacement;
 
@@ -12,13 +13,17 @@ import actualklasterkraft.world.player;
 import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
+import actualklasterkraft.net.play.session;
 
 namespace asio = boost::asio;
 using namespace protocolprimitives;
 
 export asio::awaitable<void> send_spawn_entity_of_player(
-    Transport &transport, Player &other)
+    std::shared_ptr<PlaySession> session, Player &other)
 {
+    SessionTaskGuard guard { session };
+    Transport &transport = session->transport;
+
     std::array<uint8_t, 64> buf;
     auto it = buf.data();
 
@@ -45,8 +50,11 @@ export asio::awaitable<void> send_spawn_entity_of_player(
 }
 
 export asio::awaitable<void> send_remove_entity_of_player(
-    Transport &transport, Player &other)
+    std::shared_ptr<PlaySession> session, Player &other)
 {
+    SessionTaskGuard guard { session };
+    Transport &transport = session->transport;
+
     // Remove Entities: Packet ID, count of Entity IDs
     std::array<uint8_t, 16> buf { 0x4D, 0x01 };
     auto end = write_var<uint32_t>(buf.data() + 2, other.get_eid());

@@ -5,6 +5,7 @@ module;
 #include <boost/container/static_vector.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 export module actualklasterkraft.net.play.motion;
 
 import actualklasterkraft.generic.completiontokens;
@@ -18,6 +19,7 @@ import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
 import actualklasterkraft.net.play.packetrouter;
+import actualklasterkraft.net.play.session;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -40,20 +42,35 @@ int16_t calculate_axis_i16_delta(double current, double previous)
 }
 
 export asio::awaitable<void> pull_posrot_loop(
-    Transport &transport, Player &self, Player &target)
+    std::shared_ptr<PlaySession> session, Player &target)
 {
+    SessionTaskGuard guard { session };
+    Transport &transport = session->transport;
+    Player &self = *session->player;
+
     for (;;)
     {
         PosRot previous_posrot = target.get_posrot();
 
+        if (session->dead)
+            co_return;
+
         auto variant = co_await (
             target.wait_posrot_update(asio::as_tuple(asio::use_awaitable))
             || self.wait_player_exit_simulation_distance(
-                asio::as_tuple(asio::use_awaitable)));
+                asio::as_tuple(asio::use_awaitable))
+            || session->done.wait(asio::as_tuple(asio::use_awaitable)));
+        if (std::get_if<2>(&variant))
+            co_return;
         if (auto *exited = std::get_if<1>(&variant))
         {
             auto &[ec, p] = *exited;
-            if (!ec && p == &target)
+            // FIX: the old code did `continue` on ec (e.g. EntityWasKilled
+            // when our own player dies), hanging this loop forever on a
+            // dead player. Any error here means we must stop.
+            if (ec)
+                co_return;
+            if (p == &target)
                 co_return;
             continue;
         }
@@ -122,9 +139,14 @@ constexpr uint32_t SetPlayerPosPacketID = 0x1E, SetPlayerPosRotPacketID = 0x1F,
                    SetPlayerRotPacketID = 0x20,
                    SetPlayerMovementFlagsPacketID = 0x21;
 
-export asio::awaitable<void> push_posrot_loop(Transport &transport,
-    asio::streambuf &sb, PacketRouter &packet_router, Player &self)
+export asio::awaitable<void> push_posrot_loop(
+    std::shared_ptr<PlaySession> session)
 {
+    Transport &transport = session->transport;
+    asio::streambuf &sb = session->streambuf;
+    PacketRouter &packet_router = session->router;
+    Player &self = *session->player;
+
     asio::experimental::channel<PacketRouter::OnPacketSignature> channel(
         transport.socket.get_executor());
     auto send_cb = [&](sys::error_code ec, uint32_t id)
@@ -136,9 +158,24 @@ export asio::awaitable<void> push_posrot_loop(Transport &transport,
     auto sub_none
         = packet_router.subscribe(SetPlayerMovementFlagsPacketID, send_cb);
 
+    // The router may have died (cancel_all) before we subscribed, e.g.
+    // when the client disconnected during init: then no message will ever
+    // arrive on the channel and we'd hang forever. Bail out instead; the
+    // caller (play) will run the shutdown path.
+    if (packet_router.dead())
+        co_return;
+
     for (;;)
     {
-        auto [ec, packet_id] = co_await channel.async_receive(asio::as_tuple);
+        if (session->dead)
+            co_return;
+
+        auto variant = co_await (
+            channel.async_receive(asio::as_tuple(asio::use_awaitable))
+            || session->done.wait(asio::as_tuple(asio::use_awaitable)));
+        if (std::get_if<1>(&variant))
+            co_return;
+        auto [ec, packet_id] = std::move(std::get<0>(variant));
         if (is_normal_shutdown(ec))
             co_return;
         else if (ec)

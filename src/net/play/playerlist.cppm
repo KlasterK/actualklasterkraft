@@ -4,6 +4,7 @@ module;
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <ranges>
 #include <vector>
 export module actualklasterkraft.net.play.playerlist;
@@ -16,6 +17,7 @@ import actualklasterkraft.world.player;
 import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
+import actualklasterkraft.net.play.session;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -23,16 +25,26 @@ using namespace protocolprimitives;
 using namespace asio::experimental::awaitable_operators;
 using ISI = std::istreambuf_iterator<char>;
 
-export asio::awaitable<void> tab_list_loop(Transport &transport, Player &self)
+export asio::awaitable<void> tab_list_loop(std::shared_ptr<PlaySession> session)
 {
+    SessionTaskGuard guard { session };
+    Transport &transport = session->transport;
+    Player &self = *session->player;
+
     std::array<uint8_t, 64> buf;
     sys::error_code ec;
     for (;;)
     {
+        if (session->dead)
+            co_return;
+
         auto variant = co_await (get_global_player_pool().wait_player_spawn(
                                      asio::as_tuple(asio::use_awaitable))
             || get_global_player_pool().wait_player_about_to_die(
-                asio::as_tuple(asio::use_awaitable)));
+                asio::as_tuple(asio::use_awaitable))
+            || session->done.wait(asio::as_tuple(asio::use_awaitable)));
+        if (std::get_if<2>(&variant))
+            co_return;
 
         auto it = buf.begin();
         if (auto *tuple = std::get_if<0>(&variant))
@@ -70,8 +82,10 @@ export asio::awaitable<void> tab_list_loop(Transport &transport, Player &self)
     }
 };
 
-export asio::awaitable<bool> init_tab_list(Transport &transport, Player &self)
+export asio::awaitable<bool> init_tab_list(std::shared_ptr<PlaySession> session)
 {
+    Transport &transport = session->transport;
+
     // send Player Info Update with all players including us
     std::array<uint8_t, 8> buf1 {
         0x46, // packet ID
@@ -102,8 +116,15 @@ export asio::awaitable<bool> init_tab_list(Transport &transport, Player &self)
         co_return false;
     }
 
+    ++session->pending;
     asio::co_spawn(transport.socket.get_executor(),
-        tab_list_loop(transport, self), detached_log_exceptions_token);
+        [session]() -> asio::awaitable<void>
+        {
+            co_await tab_list_loop(session);
+            if (--session->pending == 0)
+                session->all_done.emit();
+        },
+        detached_log_exceptions_token);
 
     co_return true;
 }

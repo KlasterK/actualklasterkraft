@@ -1,12 +1,9 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/intrusive/link_mode.hpp>
-#include <boost/intrusive/list.hpp>
-#include <boost/intrusive/options.hpp>
-#include <boost/intrusive/slist.hpp>
-#include <boost/system.hpp>
 #include <exception>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <print>
 #include <stdexcept>
 export module actualklasterkraft.net.play.packetrouter;
@@ -19,7 +16,6 @@ import actualklasterkraft.net.base.transport;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
-namespace bi = boost::intrusive;
 using namespace protocolprimitives;
 using asio::ip::tcp;
 
@@ -41,10 +37,14 @@ public:
     PacketSubscription(const PacketSubscription &) = delete;
     PacketSubscription &operator=(const PacketSubscription &) = delete;
 
+    // Subscription owns its table entry until reset() or move.
+    // The entry (inside PacketRouter) MUST outlive the subscription.
     PacketSubscription(PacketSubscription &&other) noexcept
-        : m_table_entry(other.m_table_entry)
+        : m_entry(other.m_entry)
+        , m_owns(other.m_owns)
     {
-        std::swap(m_hook, other.m_hook);
+        other.m_entry = nullptr;
+        other.m_owns = false;
     }
 
     PacketSubscription &operator=(PacketSubscription &&other) noexcept
@@ -53,8 +53,10 @@ public:
             return *this;
 
         reset();
-        m_table_entry = other.m_table_entry;
-        std::swap(m_hook, other.m_hook);
+        m_entry = other.m_entry;
+        m_owns = other.m_owns;
+        other.m_entry = nullptr;
+        other.m_owns = false;
 
         return *this;
     }
@@ -63,22 +65,29 @@ public:
 
     void reset() noexcept
     {
-        if (m_hook.is_linked())
-            m_table_entry.get() = nullptr;
-        m_hook.unlink();
+        if (m_owns && m_entry)
+        {
+            // Clear our slot so a later cancel_all() won't invoke
+            // a dangling lambda (this was the crash on disconnect:
+            // the Confirm-Teleportation handler outlived its stack frame).
+            *m_entry = nullptr;
+        }
+        m_entry = nullptr;
+        m_owns = false;
     }
 
 private:
     friend class PacketRouter;
 
-    PacketSubscription(MOF &entry) noexcept
-        : m_table_entry(entry)
+    explicit PacketSubscription(MOF *entry) noexcept
+        : m_entry(entry)
+        , m_owns(true)
     {
     }
 
 private:
-    std::reference_wrapper<MOF> m_table_entry;
-    bi::list_member_hook<bi::link_mode<bi::auto_unlink>> m_hook;
+    MOF *m_entry { nullptr };
+    bool m_owns { false };
 };
 
 export class PacketRouter
@@ -100,11 +109,15 @@ public:
     PacketRouter &operator=(const PacketRouter &) = delete;
     PacketRouter &operator=(PacketRouter &&) = delete;
 
-    void begin_receiving()
+    // `lifetime` keeps the session (which owns this router, the transport
+    // and the streambuf) alive until the pending read finishes.
+    // Without it the completion handler would dereference a destroyed
+    // router after play() returns -> use-after-free crash on disconnect.
+    void begin_receiving(std::shared_ptr<void> lifetime = { })
     {
         asio::co_spawn(m_transport.socket.get_executor(),
             packetops::get(m_transport, m_streambuf),
-            [this](std::exception_ptr exc_ptr, sys::error_code ec)
+            [this, lifetime](std::exception_ptr exc_ptr, sys::error_code ec)
             {
                 if (exc_ptr)
                     std::rethrow_exception(exc_ptr);
@@ -135,7 +148,7 @@ public:
                     m_callbacks[packet_id](sys::error_code { }, packet_id);
                 }
 
-                begin_receiving();
+                begin_receiving(std::move(lifetime));
             });
     }
 
@@ -150,24 +163,42 @@ public:
                 "PacketRouter::subscribe: packet_id already taken");
 
         m_callbacks[packet_id] = std::forward<decltype(functor_cb)>(functor_cb);
-        return PacketSubscription(m_callbacks[packet_id]);
+        return PacketSubscription(&m_callbacks[packet_id]);
+    }
+
+    void unsubscribe(uint32_t packet_id) noexcept
+    {
+        if (packet_id < MaxPacketID)
+            m_callbacks[packet_id] = nullptr;
+    }
+
+    // Sticky receive-loop error. begin_receiving() terminates on the first
+    // socket error; any task subscribing AFTER that would otherwise wait
+    // forever (this hung play() when the client disconnected during init:
+    // push_posrot_loop's channel never got a message because cancel_all had
+    // already run before it subscribed). Late subscribers must bail out.
+    bool dead() const noexcept { return m_sticky_error.has_value(); }
+    sys::error_code sticky_error() const noexcept
+    {
+        return m_sticky_error.value_or(sys::error_code { });
     }
 
 private:
     void cancel_all(sys::error_code ec)
     {
+        m_sticky_error = ec;
+        // Swap out callbacks before invoking: handlers may subscribe/
+        // unsubscribe re-entrantly, and the router may be under teardown.
+        // Skipping nulls also avoids invoking stale handlers.
+        auto callbacks = std::move(m_callbacks);
         for (uint32_t packet_id = 0; packet_id < MaxPacketID; ++packet_id)
-            if (m_callbacks[packet_id])
-                m_callbacks[packet_id](ec, packet_id);
+            if (callbacks[packet_id])
+                callbacks[packet_id](ec, packet_id);
     }
 
 private:
     Transport &m_transport;
     asio::streambuf &m_streambuf;
-    bi::slist<PacketSubscription,
-        bi::member_hook<PacketSubscription,
-            decltype(PacketSubscription::m_hook), &PacketSubscription::m_hook>,
-        bi::constant_time_size<false>>
-        m_subscriptions;
     std::array<PacketSubscription::MOF, MaxPacketID> m_callbacks { };
+    std::optional<sys::error_code> m_sticky_error { };
 };

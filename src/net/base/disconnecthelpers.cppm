@@ -33,8 +33,13 @@ boost::asio::awaitable<void> epilog(
         std::println("Client {} was disconnected with reason: {}",
             transport.remote_endpoint_copy, reason);
 
-    transport.socket.shutdown(tcp::socket::shutdown_both);
-    transport.socket.close();
+    // NOTE: shutdown/close with an error_code overload: several tasks may
+    // race to disconnect the same (possibly already closed) socket, and
+    // the throwing overloads would let an exception escape play() past
+    // its shutdown()/kill() path, stranding the player slot.
+    sys::error_code ignored_ec;
+    transport.socket.shutdown(tcp::socket::shutdown_both, ignored_ec);
+    transport.socket.close(ignored_ec);
 }
 
 export namespace disconnect

@@ -95,7 +95,10 @@ asio::awaitable<void> statecoroutines::configuration(
         }
     }
 
-    asio::co_spawn(transport.socket.get_executor(),
+    // NOTE: grab the executor BEFORE moving transport (same use-after-move
+    // as in login.cpp).
+    auto executor = transport.socket.get_executor();
+    asio::co_spawn(executor,
         statecoroutines::play(std::move(transport), std::move(collected_info)),
         detached_log_exceptions_token);
 }
