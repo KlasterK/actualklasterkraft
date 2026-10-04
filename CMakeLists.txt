@@ -81,6 +81,8 @@ target_sources(actualklasterkraft
         src/net/play/motion.cppm
         src/net/play/packetrouter.cppm
         src/net/play/playerlist.cppm
+        src/net/play/session.cppm
+        
     PRIVATE
         src/main.cpp
         src/world/chunkimpl/generation.cpp

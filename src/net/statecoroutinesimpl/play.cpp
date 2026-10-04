@@ -318,7 +318,9 @@ asio::awaitable<void> statecoroutines::play(
             else
                 chunk = z0_chunks[x + 1]->get_positive_z_neighbor();
 
-            boost::container::static_vector<uint8_t, 32> buf1;
+            std::vector<uint8_t> buf1;
+            buf1.reserve(0x400); 
+
             buf1.push_back(0x2D); // Chunk Data & Update Light
             write_number(std::back_inserter(buf1), x);
             write_number(std::back_inserter(buf1), z);

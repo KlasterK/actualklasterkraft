@@ -138,8 +138,8 @@ public:
                 if (m_callbacks[packet_id] == nullptr)
                 {
                     std::println(
-                        "PacketRouter::begin_receiving: received packet with ID 0x{:02X} without any subscribers",
-                        packet_id);
+                       "PacketRouter::begin_receiving: received packet with ID 0x{:02X} without any subscribers",
+                       packet_id);
 
                     m_streambuf.consume(m_streambuf.size());
                 }
