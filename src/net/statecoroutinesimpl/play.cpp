@@ -326,7 +326,8 @@ asio::awaitable<void> statecoroutines::play(
             write_number(std::back_inserter(buf1), z);
             chunkserialization::heightmaps(std::back_inserter(buf1), *chunk);
 
-            boost::container::static_vector<uint8_t, 4096> buf2;
+            std::vector<uint8_t> buf2;
+            buf2.reserve(0x400); 
             chunkserialization::data(std::back_inserter(buf2), *chunk);
             write_var<uint32_t>(std::back_inserter(buf1), buf2.size());
 
