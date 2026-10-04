@@ -15,6 +15,8 @@ using namespace protocolprimitives;
 
 export namespace chunkserialization
 {
+    constexpr int WORLD_HEIGHT = 384;
+
     constexpr uint64_t get_heightmap_mask(uint64_t height, int bpe, int entries_per_long) {
         uint64_t mask = 0;
         for (int slot = 0; slot < entries_per_long; ++slot) {
@@ -25,13 +27,12 @@ export namespace chunkserialization
 
     auto heightmaps(auto it, Chunk &chunk)
     {
-        auto start_time = std::chrono::high_resolution_clock::now();
 
         const uint8_t heightmap_ids[] = { 1};
 
         *it++ = sizeof(heightmap_ids) / sizeof(heightmap_ids[0]); // hmap count
 
-        constexpr int WORLD_HEIGHT = 384;
+        
         constexpr int BPE = 9; 
         constexpr int sectionsPerLong = 64 / BPE; // 7
         constexpr int longsCount = 37; // (256 + 7 - 1) / 7
@@ -72,13 +73,34 @@ export namespace chunkserialization
 
     auto light(auto it, Chunk &)
     {
-        // TODO: when light will be added, add its serialisation
-        *it++ = 0; // Sky Light Mask
-        *it++ = 0; // Block Light Mask
-        *it++ = 0; // Empty Sky Light Mask
-        *it++ = 0; // Empty Block Light Mask
-        *it++ = 0; // Sky Lights Arrays
-        *it++ = 0; // Block Lights Arrays
+        *it++ = 0x01;
+        it = write_number<uint64_t>(it,0b11'11111111'11111111'11111111); // all 26 sections are lit up
+
+        *it++ = 0x00; // Block Light Mask
+        *it++ = 0x00; // Empty Sky Light Mask 
+
+        *it++ = 0x01;
+        it = write_number<uint64_t>(it,0); // sections in complete darkness
+
+        constexpr int SECTIONS_COUNT = (WORLD_HEIGHT/16) + 2;
+        *it++ = SECTIONS_COUNT;
+        
+        for (int section = 0; section < SECTIONS_COUNT; ++section)
+        {
+            constexpr int LightArrSize = 2048; // 4 bits per light
+            it = write_var<uint32_t>(it,LightArrSize);
+
+            for (int i = 0; i < LightArrSize; ++i)
+            {
+                *it++ = 0xFF;
+            }
+        }
+
+        *it++ = 0x00; // Block Light arrays 
+
         return it;
     }
+
+
+
 }
