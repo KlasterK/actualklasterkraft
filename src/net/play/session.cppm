@@ -1,5 +1,6 @@
 module;
 #include <boost/asio.hpp>
+#include <boost/system.hpp>
 #include <memory>
 #include <utility>
 export module actualklasterkraft.net.play.session;
@@ -10,6 +11,7 @@ import actualklasterkraft.net.base.transport;
 import actualklasterkraft.net.play.packetrouter;
 
 namespace asio = boost::asio;
+namespace sys = boost::system;
 
 // Shared ownership for everything a play connection touches.
 //
@@ -39,14 +41,14 @@ export struct PlaySession : public std::enable_shared_from_this<PlaySession>
     // emit() would hang forever. shutdown() therefore sets `dead` first,
     // and every wait site checks `dead` before suspending (single io
     // thread => check-then-suspend is race-free).
-    Signal<void()> done;
+    Signal<void(sys::error_code)> done;
     bool dead { false };
 
     // Number of tracked detached tasks. Guarded by the io_context thread
     // (the server runs a single io.run()), so plain int is enough.
     int pending { 0 };
     // Emitted each time pending drops to zero.
-    Signal<void()> all_done;
+    Signal<void(sys::error_code)> all_done;
 
     explicit PlaySession(Transport &&t)
         : transport(std::move(t))
@@ -78,6 +80,6 @@ export struct SessionTaskGuard
     ~SessionTaskGuard() noexcept
     {
         if (--session->pending == 0)
-            session->all_done.emit();
+            session->all_done.emit({ });
     }
 };

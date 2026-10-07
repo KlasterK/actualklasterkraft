@@ -56,12 +56,13 @@ template <typename Awaitable>
 void spawn_tracked(std::shared_ptr<PlaySession> session, Awaitable &&aw)
 {
     ++session->pending;
-    asio::co_spawn(session->transport.socket.get_executor(),
+    asio::co_spawn(
+        session->transport.socket.get_executor(),
         [session, aw = std::move(aw)]() mutable -> asio::awaitable<void>
         {
             co_await std::move(aw);
             if (--session->pending == 0)
-                session->all_done.emit();
+                session->all_done.emit({ });
         },
         detached_log_exceptions_token);
 }
@@ -72,8 +73,8 @@ asio::awaitable<void> statecoroutines::play(
     // NOTE: `new` instead of std::make_shared: MSVC's
     // enable_shared_from_this declares a hidden friend make_shared which
     // makes an unqualified/ADL call ambiguous with std::make_shared.
-    auto session = std::shared_ptr<PlaySession>(
-        new PlaySession(std::move(transport)));
+    auto session
+        = std::shared_ptr<PlaySession>(new PlaySession(std::move(transport)));
     Transport &session_transport = session->transport;
     asio::streambuf &streambuf = session->streambuf;
     PacketRouter &packet_router = session->router;
@@ -105,7 +106,7 @@ asio::awaitable<void> statecoroutines::play(
     auto shutdown = [&](bool kill) -> asio::awaitable<void>
     {
         session->dead = true;
-        session->done.emit();
+        session->done.emit({ });
         sys::error_code cancel_ec;
         session_transport.socket.cancel(cancel_ec);
         // Re-emit periodically: belt and suspenders in case some wait
@@ -118,7 +119,7 @@ asio::awaitable<void> statecoroutines::play(
             co_await poll.async_wait(asio::as_tuple(asio::use_awaitable));
             if (session->pending == 0)
                 break;
-            session->done.emit();
+            session->done.emit({ });
         }
         if (kill)
         {
@@ -191,9 +192,9 @@ asio::awaitable<void> statecoroutines::play(
         if (session->dead)
             co_return co_await shutdown(true);
 
-        auto variant = co_await (
-            tmp_signal.wait(asio::as_tuple(asio::use_awaitable))
-            || session->done.wait(asio::as_tuple(asio::use_awaitable)));
+        auto variant
+            = co_await (tmp_signal.wait(asio::as_tuple(asio::use_awaitable))
+                || session->done.wait(asio::as_tuple(asio::use_awaitable)));
         if (std::get_if<1>(&variant))
             co_return co_await shutdown(true);
         ec = std::get<0>(std::get<0>(variant));
@@ -296,8 +297,8 @@ asio::awaitable<void> statecoroutines::play(
         co_return co_await shutdown(true);
     else if (ec)
     {
-        co_await disconnect::play(session_transport,
-            disconnect::fmt_reason(ec, "Set Centre Chunk"));
+        co_await disconnect::play(
+            session_transport, disconnect::fmt_reason(ec, "Set Centre Chunk"));
         co_return co_await shutdown(true);
     }
 
@@ -319,7 +320,7 @@ asio::awaitable<void> statecoroutines::play(
                 chunk = z0_chunks[x + 1]->get_positive_z_neighbor();
 
             std::vector<uint8_t> buf1;
-            buf1.reserve(0x400); 
+            buf1.reserve(0x400);
 
             buf1.push_back(0x2D); // Chunk Data & Update Light
             write_number(std::back_inserter(buf1), x);
@@ -327,7 +328,7 @@ asio::awaitable<void> statecoroutines::play(
             chunkserialization::heightmaps(std::back_inserter(buf1), *chunk);
 
             std::vector<uint8_t> buf2;
-            buf2.reserve(0x400); 
+            buf2.reserve(0x400);
             chunkserialization::data(std::back_inserter(buf2), *chunk);
             write_var<uint32_t>(std::back_inserter(buf1), buf2.size());
 
@@ -359,8 +360,7 @@ asio::awaitable<void> statecoroutines::play(
     }
 
     std::function<void(sys::error_code, Player *)> when_saw_other_player
-        = [session, &when_saw_other_player](
-              sys::error_code ec, Player *other)
+        = [session, &when_saw_other_player](sys::error_code ec, Player *other)
     {
         if (ec || !other)
             return;
@@ -375,8 +375,7 @@ asio::awaitable<void> statecoroutines::play(
     player.wait_player_enter_simulation_distance(when_saw_other_player);
 
     std::function<void(sys::error_code, Player *)> when_unsaw_other_player
-        = [session, &when_unsaw_other_player](
-              sys::error_code ec, Player *other)
+        = [session, &when_unsaw_other_player](sys::error_code ec, Player *other)
     {
         if (ec || !other)
             return;
