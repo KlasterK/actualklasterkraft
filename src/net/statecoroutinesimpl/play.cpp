@@ -48,25 +48,6 @@ using OSI = std::ostreambuf_iterator<char>;
 
 static std::minstd_rand g_rng { std::random_device { }() };
 
-// Spawn a detached loop that participates in the session lifetime:
-// it holds a shared_ptr to the session (keeping transport/buffer/router
-// alive) and is counted in session->pending so play() can join it
-// before killing the Player pool slot.
-template <typename Awaitable>
-void spawn_tracked(std::shared_ptr<PlaySession> session, Awaitable &&aw)
-{
-    ++session->pending;
-    asio::co_spawn(
-        session->transport.socket.get_executor(),
-        [session, aw = std::move(aw)]() mutable -> asio::awaitable<void>
-        {
-            co_await std::move(aw);
-            if (--session->pending == 0)
-                session->all_done.emit({ });
-        },
-        detached_log_exceptions_token);
-}
-
 asio::awaitable<void> statecoroutines::play(
     Transport transport, Player::SpawnInfo collected_info)
 {
@@ -135,7 +116,8 @@ asio::awaitable<void> statecoroutines::play(
 
     packet_router.begin_receiving(session);
 
-    spawn_tracked(session, keepalive_loop(session));
+    asio::co_spawn(session->transport.socket.get_executor(),
+        keepalive_loop(session), detached_log_exceptions_token);
 
     // Client Tick End 'no subscribers' warning spams stdout too hard, it's sent each tick
     auto client_tick_end_sub
@@ -246,16 +228,18 @@ asio::awaitable<void> statecoroutines::play(
         if (ec)
             return;
 
-        spawn_tracked(session,
+        asio::co_spawn(session->transport.socket.get_executor(),
             send_system_chat_message(
-                session, std::move(text_component), is_overlay));
+                session, std::move(text_component), is_overlay),
+            detached_log_exceptions_token);
 
         p->wait_chat_message(when_saw_chat_message);
     };
     player.wait_chat_message(when_saw_chat_message);
 
     // Outcoming messages soaking
-    spawn_tracked(session, chat_message_loop(session));
+    asio::co_spawn(session->transport.socket.get_executor(),
+        chat_message_loop(session), detached_log_exceptions_token);
 
     // Hello, player!
     send_yellow_message_to_all(
@@ -354,7 +338,8 @@ asio::awaitable<void> statecoroutines::play(
             continue;
 
         other.notify_player_entered_simulation_distance(player);
-        spawn_tracked(session, pull_posrot_loop(session, other));
+        asio::co_spawn(session->transport.socket.get_executor(),
+            pull_posrot_loop(session, other), detached_log_exceptions_token);
 
         co_await send_spawn_entity_of_player(session, other);
     }
@@ -366,8 +351,11 @@ asio::awaitable<void> statecoroutines::play(
             return;
 
         other->notify_player_entered_simulation_distance(*session->player);
-        spawn_tracked(session, pull_posrot_loop(session, *other));
-        spawn_tracked(session, send_spawn_entity_of_player(session, *other));
+        asio::co_spawn(session->transport.socket.get_executor(),
+            pull_posrot_loop(session, *other), detached_log_exceptions_token);
+        asio::co_spawn(session->transport.socket.get_executor(),
+            send_spawn_entity_of_player(session, *other),
+            detached_log_exceptions_token);
 
         session->player->wait_player_enter_simulation_distance(
             when_saw_other_player);
@@ -380,7 +368,9 @@ asio::awaitable<void> statecoroutines::play(
         if (ec || !other)
             return;
 
-        spawn_tracked(session, send_remove_entity_of_player(session, *other));
+        asio::co_spawn(session->transport.socket.get_executor(),
+            send_remove_entity_of_player(session, *other),
+            detached_log_exceptions_token);
         session->player->wait_player_exit_simulation_distance(
             when_unsaw_other_player);
     };

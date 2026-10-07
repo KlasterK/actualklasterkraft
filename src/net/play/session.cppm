@@ -47,8 +47,6 @@ export struct PlaySession : public std::enable_shared_from_this<PlaySession>
     // Number of tracked detached tasks. Guarded by the io_context thread
     // (the server runs a single io.run()), so plain int is enough.
     int pending { 0 };
-    // Emitted each time pending drops to zero.
-    Signal<void(sys::error_code)> all_done;
 
     explicit PlaySession(Transport &&t)
         : transport(std::move(t))
@@ -77,9 +75,5 @@ export struct SessionTaskGuard
     SessionTaskGuard(const SessionTaskGuard &) = delete;
     SessionTaskGuard &operator=(const SessionTaskGuard &) = delete;
 
-    ~SessionTaskGuard() noexcept
-    {
-        if (--session->pending == 0)
-            session->all_done.emit({ });
-    }
+    ~SessionTaskGuard() noexcept { --session->pending; }
 };

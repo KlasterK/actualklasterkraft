@@ -122,8 +122,7 @@ export asio::awaitable<bool> init_tab_list(std::shared_ptr<PlaySession> session)
         [session]() -> asio::awaitable<void>
         {
             co_await tab_list_loop(session);
-            if (--session->pending == 0)
-                session->all_done.emit({ });
+            --session->pending;
         },
         detached_log_exceptions_token);
 
