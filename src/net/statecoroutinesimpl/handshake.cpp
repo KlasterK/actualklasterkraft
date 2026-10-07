@@ -59,28 +59,17 @@ asio::awaitable<void> statecoroutines::handshake(Transport transport)
     if (ec)
         co_return fail();
 
-    asio::awaitable<void> next_coro;
-    bool has_next { false };
-    auto executor = transport.socket.get_executor();
+    asio::awaitable<void> next_coro { };
     if (intent == 1) // Status
-    {
         next_coro = statecoroutines::status(std::move(transport));
-        has_next = true;
-    }
     else if (intent == 2 || intent == 3) // Login or Transfer
-    {
         next_coro = statecoroutines::login(std::move(transport), intent == 3);
-        has_next = true;
-    }
     else
         co_return fail();
 
     if (it != end)
         co_return fail();
 
-    if (!has_next)
-        co_return fail();
-
-    asio::co_spawn(executor, std::move(next_coro),
-        detached_log_exceptions_token);
+    auto io = transport.socket.get_executor();
+    asio::co_spawn(io, std::move(next_coro), detached_log_exceptions_token);
 }

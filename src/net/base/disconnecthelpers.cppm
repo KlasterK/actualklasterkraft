@@ -33,13 +33,8 @@ boost::asio::awaitable<void> epilog(
         std::println("Client {} was disconnected with reason: {}",
             transport.remote_endpoint_copy, reason);
 
-    // NOTE: shutdown/close with an error_code overload: several tasks may
-    // race to disconnect the same (possibly already closed) socket, and
-    // the throwing overloads would let an exception escape play() past
-    // its shutdown()/kill() path, stranding the player slot.
-    sys::error_code ignored_ec;
-    transport.socket.shutdown(tcp::socket::shutdown_both, ignored_ec);
-    transport.socket.close(ignored_ec);
+    transport.socket.shutdown(tcp::socket::shutdown_both);
+    transport.socket.close();
 }
 
 export namespace disconnect
@@ -81,18 +76,17 @@ export namespace disconnect
         return epilog(transport, std::move(vec), std::move(reason));
     }
 
-    std::string fmt_reason(sys::error_code ec, std::string_view opt_ctx)
+    std::string fmt_reason(sys::error_code ec, std::string_view ctx)
     {
         if (ec == MCGameError::ServerClosed)
             return "Server closed";
         if (ec.category() == MCGameErrorCategory::instance())
-            return "";
+            return std::format("Critical in-game error ({}): {}", ctx, ec);
         if (ec.category() == MCProtocolErrorCategory::instance()
             || ec.category() == asio::error::system_category
             || ec.category() == asio::error::misc_category)
-            return opt_ctx.empty()
-                ? std::format("Protocol Desync : {}", ec)
-                : std::format("Protocol Desync ({}) : {}", opt_ctx, ec);
-        return "wtf";
+            return std::format("Protocol desync ({}): {}", ctx, ec);
+        return std::format(
+            "Critical error of an unexpected type ({}): {}", ctx, ec);
     }
 }
