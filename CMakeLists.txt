@@ -65,6 +65,7 @@ target_sources(actualklasterkraft
         src/data/nbtbuilder.cppm
         src/data/prebuiltconfiguration.cppm
         src/data/protocolprimitives.cppm
+        src/data/unicode.cppm
         src/world/chunk.cppm
         src/world/player.cppm
         src/world/posrot.cppm
@@ -75,6 +76,7 @@ target_sources(actualklasterkraft
         src/net/base/transport.cppm
         src/net/play/chat.cppm
         src/net/play/chunkserialization.cppm
+        src/net/play/commands.cppm
         src/net/play/entityplacement.cppm
         src/net/play/finalisation.cppm
         src/net/play/initiation.cppm

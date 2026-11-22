@@ -27,6 +27,7 @@ import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
 import actualklasterkraft.net.play.chat;
 import actualklasterkraft.net.play.chunkserialization;
+import actualklasterkraft.net.play.commands;
 import actualklasterkraft.net.play.entityplacement;
 import actualklasterkraft.net.play.finalisation;
 import actualklasterkraft.net.play.initiation;
@@ -146,6 +147,8 @@ asio::awaitable<void> statecoroutines::play(
             || packet_id == ConfirmTeleportationPacketID)
             std::tie(ec, ctx) = player_posrot_updater.on_posrot_packet(
                 packet_id, packet_data, *player);
+        else if (packet_id == ServerboundChatCommandPacketID)
+            std::tie(ec, ctx) = on_chat_command_packet(packet_data, *player);
         else if (packet_id
             != ServerboundClientTickEndPacketID) // ignored due to its frequency
             std::println(

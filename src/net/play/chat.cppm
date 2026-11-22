@@ -16,6 +16,7 @@ import actualklasterkraft.generic.pubsub;
 import actualklasterkraft.generic.templates;
 import actualklasterkraft.data.nbtbuilder;
 import actualklasterkraft.data.protocolprimitives;
+import actualklasterkraft.data.unicode;
 import actualklasterkraft.world.player;
 import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
@@ -75,14 +76,22 @@ export std::tuple<sys::error_code, std::string_view> on_chat_message_packet(
     if (message_len == 0) // it's 0 on errors too
         return { MCGameError::Kick,
             "You can't send an empty message. Don't abuse us." };
-    if (message_len > 256)
+    if (data.end() - data_it < message_len)
+        return { MCProtocolError::UnsufficientPacketData, "Chat Message" };
+
+    std::string_view message_text { static_cast<const char *>(
+                                        static_cast<const void *>(&*data_it)),
+        message_len };
+
+    auto opt_len = unicode::verify_count_length(message_text);
+    if (!opt_len)
+        return { MCGameError::Kick,
+            "You can't send malformed Unicode. Don't abuse us." };
+    if (*opt_len > 256)
         return {
             MCGameError::Kick,
             "You can't send a message longer than 256 characters. Don't abuse us."
         };
-    if (data.end() - data_it < message_len)
-        return { MCProtocolError::UnsufficientPacketData, "Chat Message" };
-    // TODO: use length in UTF-8 characters, not bytes, and also check the string for correctness
 
     std::array<char, 512> buf;
     auto buf_it = buf.data();
