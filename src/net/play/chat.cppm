@@ -7,6 +7,7 @@ module;
 #include <iterator>
 #include <new>
 #include <print>
+#include <span>
 #include <string_view>
 export module actualklasterkraft.net.play.chat;
 
@@ -28,7 +29,7 @@ namespace sys = boost::system;
 using namespace protocolprimitives;
 using namespace asio::experimental::awaitable_operators;
 
-constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
+static constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 export constexpr uint32_t ServerboundChatMessagePacketID = 0x09;
 
 export void send_usual_message_to_all(std::string_view message)

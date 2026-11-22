@@ -9,6 +9,13 @@ Minecraft Java Edition server implementation in C++.
 - C++ modules, not headers/TUs
 - Less heap allocations, more pools, arenas and stack
 
+## How to build on Windows
+
+'''cmd
+cmake -B build -G Ninja
+cmake --build build
+'''
+
 ## Dependencies 
 
 - GCC or Clang supporting C++23

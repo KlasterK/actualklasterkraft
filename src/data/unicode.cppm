@@ -91,7 +91,7 @@ export namespace unicode
             }
             s.remove_prefix(1);
         }
-        return { s.end(), 0 };
+        return { s.end(), s.end() };
     }
 
     /// Returns an iterator pointing to the first non-whitespace character in

@@ -6,6 +6,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <random>
+#include <span>
 export module actualklasterkraft.net.play.motion;
 
 import actualklasterkraft.generic.completiontokens;
@@ -25,7 +26,7 @@ namespace sys = boost::system;
 using namespace protocolprimitives;
 using namespace asio::experimental::awaitable_operators;
 using PacketVec = boost::container::static_vector<uint8_t, 128>;
-constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
+static constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 
 constexpr double SimpleUpdateLimit = 7.9;
 

@@ -9,6 +9,7 @@ module;
 #include <new>
 #include <print>
 #include <random>
+#include <span>
 module actualklasterkraft.net.base.statecoroutines;
 
 import actualklasterkraft.generic.completiontokens;

@@ -142,8 +142,10 @@ private:
 
 export template <size_t N> class PlayerPool : private BasePool<N>
 {
-private:
+public:
     using ValueType = Player;
+private:
+    
     static constexpr uint32_t EIDBase = 0;
 
     friend PoolTakenSlotsIterator<PlayerPool>;

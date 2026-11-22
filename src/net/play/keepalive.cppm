@@ -5,6 +5,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <random>
+#include <span>
 export module actualklasterkraft.net.play.keepalive;
 
 import actualklasterkraft.generic.errc;
@@ -19,7 +20,7 @@ namespace sys = boost::system;
 using namespace asio::experimental::awaitable_operators;
 using namespace std::literals;
 using namespace protocolprimitives;
-constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
+static constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 
 static std::minstd_rand g_rng { std::random_device { }() };
 

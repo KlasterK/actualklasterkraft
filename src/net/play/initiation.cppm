@@ -24,7 +24,7 @@ import actualklasterkraft.world.player;
 namespace sys = boost::system;
 namespace asio = boost::asio;
 using namespace protocolprimitives;
-constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
+static constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 
 constexpr uint32_t LoginPlayPacketID = 0x31, GameEventPacketID = 0x26,
                    SetCentreChunkPacketID = 0x5E,

@@ -20,7 +20,7 @@ namespace asio = boost::asio;
 namespace sys = boost::system;
 using namespace protocolprimitives;
 using namespace asio::experimental::awaitable_operators;
-constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
+static constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 
 export asio::awaitable<void> detached_tab_list_loop(
     Transport &transport, Player &self, FinalisationSignal &fin)
