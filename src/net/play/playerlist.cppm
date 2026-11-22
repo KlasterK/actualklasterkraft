@@ -8,34 +8,35 @@ module;
 #include <vector>
 export module actualklasterkraft.net.play.playerlist;
 
-import actualklasterkraft.generic.completiontokens;
 import actualklasterkraft.generic.errc;
 import actualklasterkraft.generic.templates;
 import actualklasterkraft.data.protocolprimitives;
 import actualklasterkraft.world.player;
-import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
+import actualklasterkraft.net.play.finalisation;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
 using namespace protocolprimitives;
 using namespace asio::experimental::awaitable_operators;
-using ISI = std::istreambuf_iterator<char>;
+constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 
-export asio::awaitable<void> tab_list_loop(Transport &transport, Player &self)
+export asio::awaitable<void> detached_tab_list_loop(
+    Transport &transport, Player &self, FinalisationSignal &fin)
 {
     std::array<uint8_t, 64> buf;
     sys::error_code ec;
     for (;;)
     {
-        auto variant = co_await (get_global_player_pool().wait_player_spawn(
-                                     asio::as_tuple(asio::use_awaitable))
-            || get_global_player_pool().wait_player_about_to_die(
-                asio::as_tuple(asio::use_awaitable)));
+        auto opt_variant = co_await awaitable_or_fin(fin,
+            get_global_player_pool().wait_player_spawn(AwTuple)
+                || get_global_player_pool().wait_player_about_to_die(AwTuple));
+        if (!opt_variant)
+            co_return;
 
         auto it = buf.begin();
-        if (auto *tuple = std::get_if<0>(&variant))
+        if (auto *tuple = std::get_if<0>(&*opt_variant))
         {
             const auto &[ec, other] = *tuple;
             if (ec)
@@ -51,7 +52,7 @@ export asio::awaitable<void> tab_list_loop(Transport &transport, Player &self)
         }
         else
         {
-            const auto &[ec, other] = std::get<1>(variant);
+            const auto &[ec, other] = std::get<1>(*opt_variant);
             if (ec || other == &self)
                 co_return;
 
@@ -62,15 +63,13 @@ export asio::awaitable<void> tab_list_loop(Transport &transport, Player &self)
 
         ec = co_await packetops::put(
             transport, asio::buffer(buf.data(), it - buf.begin()));
-        if (is_normal_shutdown(ec))
-            co_return;
-        else if (ec)
-            co_return co_await disconnect::play(transport,
-                disconnect::fmt_reason(ec, "Player Info Update/Remove"));
+        if (ec)
+            co_return fin.emit(ec, "Player Info Update/Remove");
     }
 };
 
-export asio::awaitable<bool> init_tab_list(Transport &transport, Player &self)
+export asio::awaitable<std::tuple<sys::error_code, std::string_view>>
+init_tab_list(Transport &transport, Player &self)
 {
     // send Player Info Update with all players including us
     std::array<uint8_t, 8> buf1 {
@@ -95,15 +94,7 @@ export asio::awaitable<bool> init_tab_list(Transport &transport, Player &self)
     auto ec = co_await packetops::put_va(transport,
         asio::buffer(buf1.data(), buf1_end - buf1.begin()), asio::buffer(buf2));
     if (ec)
-    {
-        if (!is_normal_shutdown(ec))
-            co_await disconnect::play(
-                transport, disconnect::fmt_reason(ec, "Update Player Info"));
-        co_return false;
-    }
+        co_return std::tuple { ec, "Update Player Info" };
 
-    asio::co_spawn(transport.socket.get_executor(),
-        tab_list_loop(transport, self), detached_log_exceptions_token);
-
-    co_return true;
+    co_return std::tuple { sys::error_code { }, "" };
 }

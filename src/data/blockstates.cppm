@@ -29,19 +29,23 @@ export namespace blockstates
     constexpr uint32_t Dirt = 10;
     constexpr uint32_t ShortGlass = 2248;
     constexpr uint32_t Bush = 2251;
+    constexpr uint32_t TallGrassUpper = 12923;
+    constexpr uint32_t TallGrassLower = 12924;
     constexpr uint32_t VoidAir = 15292;
     constexpr uint32_t CaveAir = 15293;
 
     namespace superflat
     {
-        constexpr auto Palette = guarantee_sorted_array<uint32_t>(
-            Air, GrassBlock, Dirt, ShortGlass, Bush);
+        constexpr auto Palette = guarantee_sorted_array<uint32_t>(Air,
+            GrassBlock, Dirt, ShortGlass, Bush, TallGrassUpper, TallGrassLower);
 
         constexpr size_t Air = 0;
         constexpr size_t GrassBlock = 1;
         constexpr size_t Dirt = 2;
         constexpr size_t ShortGrass = 3;
         constexpr size_t Bush = 4;
+        constexpr size_t TallGrassUpper = 5;
+        constexpr size_t TallGrassLower = 6;
     }
 
     constexpr auto AnyFluidPalette = guarantee_sorted_array<uint32_t>(45, 47,

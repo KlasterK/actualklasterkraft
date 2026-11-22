@@ -1,6 +1,8 @@
 module;
 #include <array>
 #include <boost/asio.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/container/small_vector.hpp>
 #include <boost/smart_ptr/make_local_shared.hpp>
 #include <iterator>
 #include <new>
@@ -8,6 +10,7 @@ module;
 #include <string_view>
 export module actualklasterkraft.net.play.chat;
 
+import actualklasterkraft.generic.completiontokens;
 import actualklasterkraft.generic.errc;
 import actualklasterkraft.generic.pubsub;
 import actualklasterkraft.generic.templates;
@@ -17,12 +20,15 @@ import actualklasterkraft.world.player;
 import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
-import actualklasterkraft.net.play.packetrouter;
+import actualklasterkraft.net.play.finalisation;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
 using namespace protocolprimitives;
-using ISI = std::istreambuf_iterator<char>;
+using namespace asio::experimental::awaitable_operators;
+
+constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
+export constexpr uint32_t ServerboundChatMessagePacketID = 0x09;
 
 export void send_usual_message_to_all(std::string_view message)
 {
@@ -55,59 +61,70 @@ export void send_yellow_message_to_all(std::string_view message)
     }
 }
 
-export asio::awaitable<void> chat_message_loop(Transport &transport,
-    asio::streambuf &sb, PacketRouter &packet_router, Player &player)
+export std::tuple<sys::error_code, std::string_view> on_chat_message_packet(
+    std::span<const uint8_t> data, Player &player)
 {
-    Signal<void(sys::error_code)> signal;
-    auto sub = packet_router.subscribe(
-        0x09, [&](sys::error_code ec, uint32_t) { signal.emit(ec); });
+    sys::error_code ec;
+    auto data_it = data.begin();
+    uint32_t message_len { };
 
-    for (;;)
-    {
-        auto [ec] = co_await signal.wait(asio::as_tuple);
-        if (is_normal_shutdown(ec))
-            co_return;
-        else if (ec)
-            co_return co_await disconnect::play(
-                transport, disconnect::fmt_reason(ec, "Chat Message"));
+    std::tie(message_len, data_it, ec)
+        = read_var<uint32_t>(data_it, data.end());
+    if (ec)
+        return { ec, "Chat Message" };
+    if (message_len == 0) // it's 0 on errors too
+        return { MCGameError::Kick,
+            "You can't send an empty message. Don't abuse us." };
+    if (message_len > 256)
+        return {
+            MCGameError::Kick,
+            "You can't send a message longer than 256 characters. Don't abuse us."
+        };
+    if (data.end() - data_it < message_len)
+        return { MCProtocolError::UnsufficientPacketData, "Chat Message" };
+    // TODO: use length in UTF-8 characters, not bytes, and also check the string for correctness
 
-        auto message_len = InlineTie(TieReturn, std::ignore, std::ignore)
-            = read_var<uint32_t>(ISI(&sb), ISI());
-        if (message_len == 0) // it's 0 on errors too
-            co_return co_await disconnect::play(
-                transport, "You can't send an empty message. Don't abuse us.");
-        if (message_len > 256)
-            co_return co_await disconnect::play(transport,
-                "You can't send a message longer than 256 characters. Don't abuse us.");
+    std::array<char, 512> buf;
+    auto buf_it = buf.data();
+    *buf_it++ = '<';
+    buf_it = std::ranges::copy(player.get_name(), buf_it).out;
+    *buf_it++ = '>';
+    *buf_it++ = ' ';
+    buf_it = std::copy_n(data_it, message_len, buf_it);
 
-        std::array<char, 512> buf;
-        auto it = buf.data();
-        *it++ = '<';
-        it = std::ranges::copy(player.get_name(), it).out;
-        *it++ = '>';
-        *it++ = ' ';
-        if (message_len != sb.sgetn(it, message_len))
-            co_return co_await disconnect::play(transport,
-                disconnect::fmt_reason(
-                    MCProtocolError::UnsufficientPacketData, "Chat Message"));
+    // Ignore Mojang crypto shit part of the packet (there're a lot more fields)
+    // TODO: though, validating them would be good
 
-        // Ignore Mojang crypto shit part of the packet
-        sb.consume(sb.size());
-
-        send_usual_message_to_all(
-            std::string_view(buf.data(), it + message_len));
-    }
+    send_usual_message_to_all(std::string_view(buf.data(), buf_it));
+    return { };
 }
 
-export asio::awaitable<void> send_system_chat_message(Transport &transport,
-    Player::SharedTextComponent text_component, bool is_overlay)
+export asio::awaitable<void> detached_pull_chat_messages_loop(
+    Transport &transport, Player &player, FinalisationSignal &fin)
 {
-    uint8_t packet_id = 0x79, u8_is_overlay = is_overlay ? 0x01 : 0x00;
-    auto ec = co_await packetops::put_va(transport, asio::buffer(&packet_id, 1),
-        asio::buffer(*text_component), asio::buffer(&u8_is_overlay, 1));
-    if (is_normal_shutdown(ec))
-        co_return;
-    else if (ec)
-        co_await disconnect::play(
-            transport, disconnect::fmt_reason(ec, "System Chat Message"));
+    for (;;)
+    {
+        auto opt_message
+            = co_await awaitable_or_fin(fin, player.wait_chat_message(AwTuple));
+        if (!opt_message)
+            co_return;
+        if (std::get<0>(*opt_message))
+            co_return;
+
+        uint8_t packet_id = 0x79,
+                is_overlay = std::get<2>(*opt_message) ? 0x01 : 0x00;
+        asio::co_spawn(transport.socket.get_executor(),
+            awaitable_or_fin(fin,
+                packetops::put_va(transport, asio::buffer(&packet_id, 1),
+                    asio::buffer(*std::get<1>(*opt_message)),
+                    asio::buffer(&is_overlay, 1))),
+            [&fin](std::exception_ptr exc_ptr,
+                std::optional<sys::error_code> opt_ec)
+            {
+                if (exc_ptr)
+                    std::rethrow_exception(exc_ptr);
+                if (opt_ec && *opt_ec)
+                    fin.emit(*opt_ec, "System Chat Message");
+            });
+    }
 }

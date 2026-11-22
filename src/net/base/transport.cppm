@@ -21,10 +21,3 @@ export struct Transport
     {
     }
 };
-
-export bool is_normal_shutdown(sys::error_code non_empty_ec)
-{
-    return non_empty_ec == asio::error::eof
-        || non_empty_ec == asio::error::operation_aborted
-        || non_empty_ec == asio::error::bad_descriptor;
-}

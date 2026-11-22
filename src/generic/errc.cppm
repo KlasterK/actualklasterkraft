@@ -15,6 +15,8 @@ export enum class MCProtocolError {
 export enum class MCGameError {
     EntityWasKilled = 1,
     ServerClosed,
+    Timeout,
+    Kick,
 };
 
 export class MCProtocolErrorCategory : public boost::system::error_category

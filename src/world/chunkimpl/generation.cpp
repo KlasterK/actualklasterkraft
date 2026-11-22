@@ -5,7 +5,6 @@ module;
 module actualklasterkraft.world.chunk;
 
 static std::minstd_rand g_rng { std::random_device { }() };
-static std::discrete_distribution g_plants_distribution { 10, 2, 1 };
 
 void chunkimpl::generate(Chunk &chunk)
 {
@@ -19,7 +18,8 @@ void chunkimpl::generate(Chunk &chunk)
                 blockstates::superflat::Palette,
                 blockstates::superflat::GrassBlock);
 
-            switch (std::discrete_distribution { 10, 2, 1 }(g_rng))
+            static std::discrete_distribution dist { 20, 4, 2, 1 };
+            switch (dist(g_rng))
             {
             case 1:
                 section.set_block_indirect({ x, 1, z },
@@ -30,6 +30,14 @@ void chunkimpl::generate(Chunk &chunk)
                 section.set_block_indirect({ x, 1, z },
                     blockstates::superflat::Palette,
                     blockstates::superflat::Bush);
+                break;
+            case 3:
+                section.set_block_indirect({ x, 1, z },
+                    blockstates::superflat::Palette,
+                    blockstates::superflat::TallGrassLower);
+                section.set_block_indirect({ x, 2, z },
+                    blockstates::superflat::Palette,
+                    blockstates::superflat::TallGrassUpper);
                 break;
             }
         }

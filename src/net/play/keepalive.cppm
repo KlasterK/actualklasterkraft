@@ -1,118 +1,123 @@
 module;
 #include <boost/asio.hpp>
-#include <boost/asio/experimental/channel.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <random>
 export module actualklasterkraft.net.play.keepalive;
 
-import actualklasterkraft.generic.completiontokens;
 import actualklasterkraft.generic.errc;
-import actualklasterkraft.generic.templates;
+import actualklasterkraft.generic.pubsub;
 import actualklasterkraft.data.protocolprimitives;
-import actualklasterkraft.world.player;
-import actualklasterkraft.world.posrot;
-import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
-import actualklasterkraft.net.play.packetrouter;
+import actualklasterkraft.net.play.finalisation;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
+using namespace asio::experimental::awaitable_operators;
 using namespace std::literals;
 using namespace protocolprimitives;
-using ISI = std::istreambuf_iterator<char>;
+constexpr auto AwTuple = asio::as_tuple(asio::use_awaitable);
 
 static std::minstd_rand g_rng { std::random_device { }() };
 
-constexpr int32_t ServerboundKeepAlivePacketID = 0x1C;
-constexpr int32_t ClientboundKeepAlivePacketID = 0x2C;
-
-export asio::awaitable<void> keepalive_loop(
-    Transport &transport, asio::streambuf &sb, PacketRouter &packet_router)
+export class KeepAlive
 {
-    asio::steady_timer send_timer(transport.socket.get_executor());
-    asio::experimental::channel<PacketRouter::OnPacketSignature>
-        serverbound_keepalive_channel(transport.socket.get_executor());
-    auto sub = packet_router.subscribe(ServerboundKeepAlivePacketID,
-        [&](sys::error_code ec, uint32_t id)
-        { serverbound_keepalive_channel.async_send(ec, id, asio::detached); });
+public:
+    static constexpr uint32_t ServerboundPacketID = 0x1C;
+    static constexpr uint32_t ClientboundPacketID = 0x2C;
 
-    // If a payload is 0, the payload doesn't exist
-    std::array<uint64_t, 10> active_payloads { };
-    int timeout_counter { };
-    sys::error_code ec { };
-
-    for (;;)
+public:
+    KeepAlive(Transport &transport)
+        : m_transport(transport)
     {
-        send_timer.expires_after(1s);
-        co_await send_timer.async_wait(asio::redirect_error(ec));
+    }
+
+    std::tuple<sys::error_code, std::string_view> on_serverbound_packet(
+        std::span<const uint8_t> data)
+    {
+        auto [payload, it, ec]
+            = read_number<uint64_t>(data.begin(), data.end());
         if (ec)
-            co_return co_await disconnect::play(
-                transport, disconnect::fmt_reason(ec, "Keep Alive timer"));
+            return { ec, "Serverbound Keep Alive" };
+        if (it != data.end())
+            return { MCProtocolError::ExcessPacketData,
+                "Serverbound Keep Alive" };
 
-        if (timeout_counter++ > 2)
-            co_return co_await disconnect::play(
-                transport, "Timeout (powered by ActualKlasterKraft)");
-
-        std::array<uint8_t, 9> buf;
-        buf[0] = ClientboundKeepAlivePacketID;
-        uint64_t payload = std::uniform_int_distribution<uint64_t> { }(g_rng);
-        write_number<uint64_t>(buf.begin() + 1, payload);
-
-        ec = co_await packetops::put(transport, asio::buffer(buf));
-        if (is_normal_shutdown(ec))
-            co_return;
-        else if (ec)
-            co_return co_await disconnect::play(transport,
-                disconnect::fmt_reason(ec, "Clientbound Keep Alive"));
-
-        for (uint64_t &active_payload : active_payloads)
+        for (auto &active_payload : m_active_payloads)
         {
-            if (active_payload == 0)
-            {
-                active_payload = payload;
-                goto payload_placed;
-            }
-        }
-
-        // No free slots for payloads, then replace the first
-        active_payloads[0] = payload;
-
-    payload_placed:
-        co_await serverbound_keepalive_channel.async_receive(
-            asio::redirect_error(ec));
-        if (is_normal_shutdown(ec))
-            co_return;
-        else if (ec)
-            co_return co_await disconnect::play(transport,
-                disconnect::fmt_reason(ec, "Serverbound Keep Alive"));
-
-        auto got_payload = InlineTie(TieReturn, std::ignore, ec)
-            = read_number<uint64_t>(ISI(&sb), ISI());
-        if (ec)
-            co_return co_await disconnect::play(transport,
-                disconnect::fmt_reason(ec, "Serverbound Keep Alive"));
-        if (sb.size() > 0)
-            co_return co_await disconnect::play(transport,
-                disconnect::fmt_reason(MCProtocolError::ExcessPacketData,
-                    "Serverbound Keep Alive"));
-
-        for (auto &active_payload : active_payloads)
-        {
-            if (active_payload == got_payload)
+            if (active_payload == payload)
             {
                 active_payload = 0;
-                timeout_counter = 0;
-                goto payload_matched;
+                m_timeout_counter = 0;
+                return { };
             }
         }
-        co_return co_await disconnect::play(transport,
-            disconnect::fmt_reason(MCProtocolError::CorrelationIDMismatch,
-                "Serverbound Keep Alive"));
 
-    payload_matched:
-        continue;
+        return { MCProtocolError::CorrelationIDMismatch,
+            "Serverbound Keep Alive" };
     }
-}
+
+    asio::awaitable<void> detached_clientbound_loop(FinalisationSignal &fin)
+    {
+        asio::steady_timer send_timer(m_transport.socket.get_executor());
+
+        for (;;)
+        {
+            send_timer.expires_after(1s);
+            auto wrapped_ec = co_await awaitable_or_fin(
+                fin, send_timer.async_wait(AwTuple));
+            if (!wrapped_ec)
+                co_return;
+            if (*wrapped_ec)
+                co_return fin.emit(*wrapped_ec, "keep alive timer");
+
+            if (m_timeout_counter++ > 30)
+                co_return fin.emit(MCGameError::Timeout, "");
+
+            std::array<uint8_t, 9> buf;
+            buf[0] = ClientboundPacketID;
+            uint64_t payload
+                = std::uniform_int_distribution<uint64_t> { 1 }(g_rng);
+            write_number<uint64_t>(buf.begin() + 1, payload);
+
+            wrapped_ec = co_await awaitable_or_fin(
+                fin, packetops::put(m_transport, asio::buffer(buf)));
+            if (!wrapped_ec)
+            {
+                co_return;
+            }
+            if (*wrapped_ec)
+            {
+                fin.emit(*wrapped_ec, "Clientbound Keep Alive");
+                co_return;
+            }
+
+            bool is_payload_stored { };
+            for (uint64_t &active_payload : m_active_payloads)
+            {
+                if (active_payload == 0)
+                {
+                    active_payload = payload;
+                    is_payload_stored = true;
+                    break;
+                }
+            }
+
+            if (!is_payload_stored)
+            {
+                auto dist = std::uniform_int_distribution { 0zu,
+                    m_active_payloads.size() - 1 };
+                m_active_payloads[dist(g_rng)] = payload;
+            }
+        }
+    }
+
+private:
+    Transport &m_transport;
+    // 0 payload is an empty slot
+    std::array<uint64_t, 10> m_active_payloads { };
+    int m_timeout_counter { };
+};

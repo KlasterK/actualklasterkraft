@@ -76,18 +76,31 @@ export namespace disconnect
         return epilog(transport, std::move(vec), std::move(reason));
     }
 
-    std::string fmt_reason(sys::error_code ec, std::string_view opt_ctx)
+    std::string fmt_reason(sys::error_code ec, std::string_view ctx)
     {
         if (ec == MCGameError::ServerClosed)
-            return "Server closed";
+            return "Server closed\nPowered by ActualKlasterKraft";
+
+        if (ec == MCGameError::Timeout)
+            return "Timeout\nPowered by ActualKlasterKraft";
+
+        if (ec == MCGameError::Kick)
+            return std::format("{}\nPowered by ActualKlasterKraft", ctx);
+
         if (ec.category() == MCGameErrorCategory::instance())
-            return "";
+            return std::format(
+                "Critical in-game error ({}): {}\nPowered by ActualKlasterKraft",
+                ctx, ec);
+
         if (ec.category() == MCProtocolErrorCategory::instance()
             || ec.category() == asio::error::system_category
             || ec.category() == asio::error::misc_category)
-            return opt_ctx.empty()
-                ? std::format("Protocol Desync : {}", ec)
-                : std::format("Protocol Desync ({}) : {}", opt_ctx, ec);
-        return "wtf";
+            return std::format(
+                "Protocol desync ({}): {}\nPowered by ActualKlasterKraft", ctx,
+                ec);
+
+        return std::format(
+            "Critical error of an unexpected type ({}): {}\nPowered by ActualKlasterKraft",
+            ctx, ec);
     }
 }

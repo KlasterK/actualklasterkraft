@@ -76,13 +76,11 @@ target_sources(actualklasterkraft
         src/net/play/chat.cppm
         src/net/play/chunkserialization.cppm
         src/net/play/entityplacement.cppm
+        src/net/play/finalisation.cppm
         src/net/play/initiation.cppm
         src/net/play/keepalive.cppm
         src/net/play/motion.cppm
-        src/net/play/packetrouter.cppm
         src/net/play/playerlist.cppm
-        src/net/play/session.cppm
-        
     PRIVATE
         src/main.cpp
         src/world/chunkimpl/generation.cpp

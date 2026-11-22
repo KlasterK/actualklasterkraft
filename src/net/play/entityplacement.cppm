@@ -13,11 +13,12 @@ import actualklasterkraft.net.base.disconnecthelpers;
 import actualklasterkraft.net.base.packetops;
 import actualklasterkraft.net.base.transport;
 
+namespace sys = boost::system;
 namespace asio = boost::asio;
 using namespace protocolprimitives;
 
-export asio::awaitable<void> send_spawn_entity_of_player(
-    Transport &transport, Player &other)
+export asio::awaitable<std::tuple<sys::error_code, std::string_view>>
+send_spawn_entity_of_player(Transport &transport, Player &other)
 {
     std::array<uint8_t, 64> buf;
     auto it = buf.data();
@@ -37,15 +38,11 @@ export asio::awaitable<void> send_spawn_entity_of_player(
 
     auto ec = co_await packetops::put(
         transport, asio::buffer(buf.data(), it - buf.data()));
-    if (is_normal_shutdown(ec))
-        co_return;
-    else if (ec)
-        co_await disconnect::play(
-            transport, disconnect::fmt_reason(ec, "Spawn Entity"));
+    co_return std::tuple { ec, ec ? "Spawn Entity" : "" };
 }
 
-export asio::awaitable<void> send_remove_entity_of_player(
-    Transport &transport, Player &other)
+export asio::awaitable<std::tuple<sys::error_code, std::string_view>>
+send_remove_entity_of_player(Transport &transport, Player &other)
 {
     // Remove Entities: Packet ID, count of Entity IDs
     std::array<uint8_t, 16> buf { 0x4D, 0x01 };
@@ -53,9 +50,5 @@ export asio::awaitable<void> send_remove_entity_of_player(
 
     auto ec = co_await packetops::put(
         transport, asio::buffer(buf.data(), end - buf.data()));
-    if (is_normal_shutdown(ec))
-        co_return;
-    else if (ec)
-        co_await disconnect::play(
-            transport, disconnect::fmt_reason(ec, "Remove Entities"));
+    co_return std::tuple { ec, ec ? "Remove Entities" : "" };
 }

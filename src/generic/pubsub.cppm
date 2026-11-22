@@ -1,11 +1,13 @@
 module;
 #include <boost/asio.hpp>
 #include <boost/container/small_vector.hpp>
+#include <boost/system.hpp>
 #include <concepts>
 #include <new>
 #include <tuple>
 export module actualklasterkraft.generic.pubsub;
 
+namespace sys = boost::system;
 namespace asio = boost::asio;
 
 export template <typename Signature> class Signal;
@@ -13,17 +15,26 @@ export template <typename Signature> class Signal;
 template <typename... Args>
     requires(
         (std::is_object_v<Args> && std::default_initializable<Args>) && ...)
-class Signal<void(Args...)>
+class Signal<void(sys::error_code, Args...)>
 {
 public:
-    Signal() { m_awaiters.reserve(1); }
-
+    Signal() = default;
     Signal(const Signal &) = delete;
     Signal(Signal &&) = default;
     Signal &operator=(const Signal &) = delete;
     Signal &operator=(Signal &&) = default;
 
-    void emit(Args... args)
+    ~Signal()
+    {
+        for (auto &awaiter : m_awaiters)
+        {
+            if (awaiter == nullptr)
+                continue;
+            awaiter(asio::error::operation_aborted, Args { }...);
+        }
+    }
+
+    void emit(sys::error_code ec, Args... args)
     {
         // We empty the member vector moving its contents to the stack vector
         // so that awaiters could call wait() without problems in themselves
@@ -34,13 +45,14 @@ public:
         {
             if (awaiter == nullptr)
                 continue;
-            awaiter(args...);
+            awaiter(ec, args...);
         }
     }
 
     template <typename CompletionToken> auto wait(CompletionToken &&token)
     {
-        return asio::async_initiate<CompletionToken, void(Args...)>(
+        return asio::async_initiate<CompletionToken,
+            void(sys::error_code, Args...)>(
             [this](auto completion_handler)
             {
                 auto &awaiter
@@ -57,11 +69,8 @@ public:
                         if (!type)
                             return;
 
-                        std::tuple<Args...> args;
-                        std::get<0>(args) = asio::error::operation_aborted;
-                        std::apply([&](auto &&...args)
-                            { m_awaiters[idx](std::move(args)...); }, args);
-
+                        m_awaiters[idx](
+                            asio::error::operation_aborted, Args { }...);
                         m_awaiters[idx] = nullptr;
                     });
             },
@@ -69,10 +78,10 @@ public:
     }
 
 private:
-    boost::container::small_vector<asio::any_completion_handler<void(Args...)>,
-        1>
+    boost::container::small_vector<
+        asio::any_completion_handler<void(sys::error_code, Args...)>, 1>
         m_awaiters;
 };
 
 // https://www.mail-archive.com/llvm-bugs%40lists.llvm.org/msg102289.html
-template class Signal<void()>;
+template class Signal<void(sys::error_code)>;

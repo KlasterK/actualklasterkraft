@@ -14,6 +14,7 @@ export struct PosRot
     bool is_pushing_against_wall : 1 = false;
     bool is_position_present : 1 = false;
     bool is_rotation_present : 1 = false;
+    bool force_sync : 1 = false;
 
     void partial_update(const PosRot &other)
     {
